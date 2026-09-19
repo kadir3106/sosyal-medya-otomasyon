@@ -1,0 +1,50 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,DejaVu Sans,92,&H00FFFFFF,&H0000FFFF,&H000A0A0A,&H80000000,-1,0,0,0,100,100,0,0,1,6,2,2,60,60,520,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.09,0:00:00.52,Default,,0,0,0,,{\c&H0000FFFF&}HELLO{\c&H00FFFFFF&} LITTLE
+Dialogue: 0,0:00:00.53,0:00:00.87,Default,,0,0,0,,HELLO {\c&H0000FFFF&}LITTLE{\c&H00FFFFFF&}
+Dialogue: 0,0:00:00.88,0:00:01.51,Default,,0,0,0,,{\c&H0000FFFF&}FRIENDS{\c&H00FFFFFF&} MEET
+Dialogue: 0,0:00:02.33,0:00:02.66,Default,,0,0,0,,FRIENDS {\c&H0000FFFF&}MEET{\c&H00FFFFFF&}
+Dialogue: 0,0:00:02.67,0:00:03.22,Default,,0,0,0,,{\c&H0000FFFF&}BARNABY{\c&H00FFFFFF&} THE
+Dialogue: 0,0:00:03.53,0:00:03.65,Default,,0,0,0,,BARNABY {\c&H0000FFFF&}THE{\c&H00FFFFFF&}
+Dialogue: 0,0:00:03.66,0:00:04.09,Default,,0,0,0,,{\c&H0000FFFF&}TINY{\c&H00FFFFFF&} BABY
+Dialogue: 0,0:00:04.10,0:00:04.47,Default,,0,0,0,,TINY {\c&H0000FFFF&}BABY{\c&H00FFFFFF&}
+Dialogue: 0,0:00:04.48,0:00:04.98,Default,,0,0,0,,{\c&H0000FFFF&}DINO{\c&H00FFFFFF&} BARNABY
+Dialogue: 0,0:00:05.80,0:00:06.30,Default,,0,0,0,,DINO {\c&H0000FFFF&}BARNABY{\c&H00FFFFFF&}
+Dialogue: 0,0:00:06.32,0:00:06.69,Default,,0,0,0,,{\c&H0000FFFF&}LOVES{\c&H00FFFFFF&} SWEET
+Dialogue: 0,0:00:06.70,0:00:07.08,Default,,0,0,0,,LOVES {\c&H0000FFFF&}SWEET{\c&H00FFFFFF&}
+Dialogue: 0,0:00:07.09,0:00:07.34,Default,,0,0,0,,{\c&H0000FFFF&}RED{\c&H00FFFFFF&} STRAWBERRIES
+Dialogue: 0,0:00:07.35,0:00:08.17,Default,,0,0,0,,RED {\c&H0000FFFF&}STRAWBERRIES{\c&H00FFFFFF&}
+Dialogue: 0,0:00:08.19,0:00:08.41,Default,,0,0,0,,{\c&H0000FFFF&}AND{\c&H00FFFFFF&} SUNNY
+Dialogue: 0,0:00:08.42,0:00:08.79,Default,,0,0,0,,AND {\c&H0000FFFF&}SUNNY{\c&H00FFFFFF&}
+Dialogue: 0,0:00:08.80,0:00:09.29,Default,,0,0,0,,{\c&H0000FFFF&}DAYS{\c&H00FFFFFF&} WHEN
+Dialogue: 0,0:00:10.11,0:00:10.36,Default,,0,0,0,,DAYS {\c&H0000FFFF&}WHEN{\c&H00FFFFFF&}
+Dialogue: 0,0:00:10.38,0:00:10.94,Default,,0,0,0,,{\c&H0000FFFF&}BARNABY{\c&H00FFFFFF&} IS
+Dialogue: 0,0:00:10.95,0:00:11.09,Default,,0,0,0,,BARNABY {\c&H0000FFFF&}IS{\c&H00FFFFFF&}
+Dialogue: 0,0:00:11.10,0:00:11.59,Default,,0,0,0,,{\c&H0000FFFF&}HAPPY{\c&H00FFFFFF&} HE
+Dialogue: 0,0:00:11.90,0:00:12.03,Default,,0,0,0,,HAPPY {\c&H0000FFFF&}HE{\c&H00FFFFFF&}
+Dialogue: 0,0:00:12.04,0:00:12.50,Default,,0,0,0,,{\c&H0000FFFF&}WIGGLES{\c&H00FFFFFF&} HIS
+Dialogue: 0,0:00:12.51,0:00:12.71,Default,,0,0,0,,WIGGLES {\c&H0000FFFF&}HIS{\c&H00FFFFFF&}
+Dialogue: 0,0:00:12.72,0:00:13.03,Default,,0,0,0,,{\c&H0000FFFF&}LITTLE{\c&H00FFFFFF&} TAIL
+Dialogue: 0,0:00:13.04,0:00:13.47,Default,,0,0,0,,LITTLE {\c&H0000FFFF&}TAIL{\c&H00FFFFFF&}
+Dialogue: 0,0:00:14.29,0:00:14.48,Default,,0,0,0,,{\c&H0000FFFF&}CAN{\c&H00FFFFFF&} YOU
+Dialogue: 0,0:00:14.50,0:00:14.64,Default,,0,0,0,,CAN {\c&H0000FFFF&}YOU{\c&H00FFFFFF&}
+Dialogue: 0,0:00:14.65,0:00:15.00,Default,,0,0,0,,{\c&H0000FFFF&}WIGGLE{\c&H00FFFFFF&} LIKE
+Dialogue: 0,0:00:15.01,0:00:15.26,Default,,0,0,0,,WIGGLE {\c&H0000FFFF&}LIKE{\c&H00FFFFFF&}
+Dialogue: 0,0:00:15.27,0:00:15.83,Default,,0,0,0,,{\c&H0000FFFF&}BARNABY{\c&H00FFFFFF&} WIGGLE
+Dialogue: 0,0:00:16.65,0:00:17.08,Default,,0,0,0,,BARNABY {\c&H0000FFFF&}WIGGLE{\c&H00FFFFFF&}
+Dialogue: 0,0:00:17.09,0:00:17.47,Default,,0,0,0,,{\c&H0000FFFF&}WIGGLE{\c&H00FFFFFF&} WIGGLE
+Dialogue: 0,0:00:17.48,0:00:17.96,Default,,0,0,0,,WIGGLE {\c&H0000FFFF&}WIGGLE{\c&H00FFFFFF&}
+Dialogue: 0,0:00:18.78,0:00:19.23,Default,,0,0,0,,{\c&H0000FFFF&}YAY{\c&H00FFFFFF&} GOOD
+Dialogue: 0,0:00:20.04,0:00:20.29,Default,,0,0,0,,YAY {\c&H0000FFFF&}GOOD{\c&H00FFFFFF&}
+Dialogue: 0,0:00:20.30,0:00:20.72,Default,,0,0,0,,{\c&H0000FFFF&}JOB{\c&H00FFFFFF&}

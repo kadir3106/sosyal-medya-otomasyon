@@ -1,0 +1,91 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,DejaVu Sans,92,&H00FFFFFF,&H0000FFFF,&H000A0A0A,&H80000000,-1,0,0,0,100,100,0,0,1,6,2,2,60,60,520,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.09,0:00:01.39,Default,,0,0,0,,{\c&H0000FFFF&}IN 1971{\c&H00FFFFFF&} A
+Dialogue: 0,0:00:01.67,0:00:01.70,Default,,0,0,0,,IN 1971 {\c&H0000FFFF&}A{\c&H00FFFFFF&}
+Dialogue: 0,0:00:01.71,0:00:01.99,Default,,0,0,0,,{\c&H0000FFFF&}MAN{\c&H00FFFFFF&} IN
+Dialogue: 0,0:00:02.00,0:00:02.07,Default,,0,0,0,,MAN {\c&H0000FFFF&}IN{\c&H00FFFFFF&}
+Dialogue: 0,0:00:02.09,0:00:02.14,Default,,0,0,0,,{\c&H0000FFFF&}A{\c&H00FFFFFF&} BLACK
+Dialogue: 0,0:00:02.16,0:00:02.47,Default,,0,0,0,,A {\c&H0000FFFF&}BLACK{\c&H00FFFFFF&}
+Dialogue: 0,0:00:02.49,0:00:02.77,Default,,0,0,0,,{\c&H0000FFFF&}SUIT{\c&H00FFFFFF&} BOARDED
+Dialogue: 0,0:00:02.78,0:00:03.09,Default,,0,0,0,,SUIT {\c&H0000FFFF&}BOARDED{\c&H00FFFFFF&}
+Dialogue: 0,0:00:03.10,0:00:03.16,Default,,0,0,0,,{\c&H0000FFFF&}A{\c&H00FFFFFF&} BOEING
+Dialogue: 0,0:00:03.17,0:00:03.52,Default,,0,0,0,,A {\c&H0000FFFF&}BOEING{\c&H00FFFFFF&}
+Dialogue: 0,0:00:03.54,0:00:04.53,Default,,0,0,0,,{\c&H0000FFFF&}727{\c&H00FFFFFF&} WITH
+Dialogue: 0,0:00:04.54,0:00:04.66,Default,,0,0,0,,727 {\c&H0000FFFF&}WITH{\c&H00FFFFFF&}
+Dialogue: 0,0:00:04.67,0:00:04.73,Default,,0,0,0,,{\c&H0000FFFF&}A{\c&H00FFFFFF&} BRIEFCASE
+Dialogue: 0,0:00:04.74,0:00:05.46,Default,,0,0,0,,A {\c&H0000FFFF&}BRIEFCASE{\c&H00FFFFFF&}
+Dialogue: 0,0:00:06.27,0:00:06.43,Default,,0,0,0,,{\c&H0000FFFF&}HE{\c&H00FFFFFF&} HANDED
+Dialogue: 0,0:00:06.45,0:00:06.75,Default,,0,0,0,,HE {\c&H0000FFFF&}HANDED{\c&H00FFFFFF&}
+Dialogue: 0,0:00:06.76,0:00:06.83,Default,,0,0,0,,{\c&H0000FFFF&}THE{\c&H00FFFFFF&} FLIGHT
+Dialogue: 0,0:00:06.85,0:00:07.12,Default,,0,0,0,,THE {\c&H0000FFFF&}FLIGHT{\c&H00FFFFFF&}
+Dialogue: 0,0:00:07.13,0:00:07.54,Default,,0,0,0,,{\c&H0000FFFF&}ATTENDANT{\c&H00FFFFFF&} A
+Dialogue: 0,0:00:07.55,0:00:07.58,Default,,0,0,0,,ATTENDANT {\c&H0000FFFF&}A{\c&H00FFFFFF&}
+Dialogue: 0,0:00:07.59,0:00:07.88,Default,,0,0,0,,{\c&H0000FFFF&}NOTE{\c&H00FFFFFF&} CLAIMING
+Dialogue: 0,0:00:07.90,0:00:08.30,Default,,0,0,0,,NOTE {\c&H0000FFFF&}CLAIMING{\c&H00FFFFFF&}
+Dialogue: 0,0:00:08.31,0:00:08.40,Default,,0,0,0,,{\c&H0000FFFF&}HE{\c&H00FFFFFF&} HAD
+Dialogue: 0,0:00:08.41,0:00:08.56,Default,,0,0,0,,HE {\c&H0000FFFF&}HAD{\c&H00FFFFFF&}
+Dialogue: 0,0:00:08.57,0:00:08.62,Default,,0,0,0,,{\c&H0000FFFF&}A{\c&H00FFFFFF&} BOMB
+Dialogue: 0,0:00:08.63,0:00:08.98,Default,,0,0,0,,A {\c&H0000FFFF&}BOMB{\c&H00FFFFFF&}
+Dialogue: 0,0:00:09.23,0:00:09.70,Default,,0,0,0,,{\c&H0000FFFF&}DEMANDING{\c&H00FFFFFF&} 200 THOUSAND DOLLARS
+Dialogue: 0,0:00:09.71,0:00:11.13,Default,,0,0,0,,DEMANDING {\c&H0000FFFF&}200 THOUSAND DOLLARS{\c&H00FFFFFF&}
+Dialogue: 0,0:00:11.94,0:00:12.27,Default,,0,0,0,,{\c&H0000FFFF&}AFTER{\c&H00FFFFFF&} GETTING
+Dialogue: 0,0:00:12.28,0:00:12.51,Default,,0,0,0,,AFTER {\c&H0000FFFF&}GETTING{\c&H00FFFFFF&}
+Dialogue: 0,0:00:12.52,0:00:12.59,Default,,0,0,0,,{\c&H0000FFFF&}THE{\c&H00FFFFFF&} CASH
+Dialogue: 0,0:00:12.60,0:00:13.06,Default,,0,0,0,,THE {\c&H0000FFFF&}CASH{\c&H00FFFFFF&}
+Dialogue: 0,0:00:13.26,0:00:13.37,Default,,0,0,0,,{\c&H0000FFFF&}HE{\c&H00FFFFFF&} ORDERED
+Dialogue: 0,0:00:13.38,0:00:13.65,Default,,0,0,0,,HE {\c&H0000FFFF&}ORDERED{\c&H00FFFFFF&}
+Dialogue: 0,0:00:13.66,0:00:13.73,Default,,0,0,0,,{\c&H0000FFFF&}THE{\c&H00FFFFFF&} PLANE
+Dialogue: 0,0:00:13.75,0:00:14.06,Default,,0,0,0,,THE {\c&H0000FFFF&}PLANE{\c&H00FFFFFF&}
+Dialogue: 0,0:00:14.08,0:00:14.30,Default,,0,0,0,,{\c&H0000FFFF&}INTO{\c&H00FFFFFF&} A
+Dialogue: 0,0:00:14.31,0:00:14.37,Default,,0,0,0,,INTO {\c&H0000FFFF&}A{\c&H00FFFFFF&}
+Dialogue: 0,0:00:14.38,0:00:14.83,Default,,0,0,0,,{\c&H0000FFFF&}FREEZING{\c&H00FFFFFF&} THUNDERSTORM
+Dialogue: 0,0:00:14.84,0:00:15.53,Default,,0,0,0,,FREEZING {\c&H0000FFFF&}THUNDERSTORM{\c&H00FFFFFF&}
+Dialogue: 0,0:00:16.34,0:00:16.54,Default,,0,0,0,,{\c&H0000FFFF&}AT{\c&H00FFFFFF&} TEN
+Dialogue: 0,0:00:16.55,0:00:16.80,Default,,0,0,0,,AT {\c&H0000FFFF&}TEN{\c&H00FFFFFF&}
+Dialogue: 0,0:00:16.81,0:00:17.21,Default,,0,0,0,,{\c&H0000FFFF&}THOUSAND{\c&H00FFFFFF&} FEET
+Dialogue: 0,0:00:17.22,0:00:17.53,Default,,0,0,0,,THOUSAND {\c&H0000FFFF&}FEET{\c&H00FFFFFF&}
+Dialogue: 0,0:00:17.79,0:00:17.93,Default,,0,0,0,,{\c&H0000FFFF&}HE{\c&H00FFFFFF&} OPENED
+Dialogue: 0,0:00:17.94,0:00:18.24,Default,,0,0,0,,HE {\c&H0000FFFF&}OPENED{\c&H00FFFFFF&}
+Dialogue: 0,0:00:18.25,0:00:18.32,Default,,0,0,0,,{\c&H0000FFFF&}THE{\c&H00FFFFFF&} BACK
+Dialogue: 0,0:00:18.33,0:00:18.62,Default,,0,0,0,,THE {\c&H0000FFFF&}BACK{\c&H00FFFFFF&}
+Dialogue: 0,0:00:18.63,0:00:18.95,Default,,0,0,0,,{\c&H0000FFFF&}DOOR{\c&H00FFFFFF&} AND
+Dialogue: 0,0:00:18.96,0:00:19.06,Default,,0,0,0,,DOOR {\c&H0000FFFF&}AND{\c&H00FFFFFF&}
+Dialogue: 0,0:00:19.08,0:00:19.36,Default,,0,0,0,,{\c&H0000FFFF&}JUMPED{\c&H00FFFFFF&} INTO
+Dialogue: 0,0:00:19.37,0:00:19.51,Default,,0,0,0,,JUMPED {\c&H0000FFFF&}INTO{\c&H00FFFFFF&}
+Dialogue: 0,0:00:19.52,0:00:19.62,Default,,0,0,0,,{\c&H0000FFFF&}THE{\c&H00FFFFFF&} PITCH
+Dialogue: 0,0:00:19.63,0:00:19.92,Default,,0,0,0,,THE {\c&H0000FFFF&}PITCH{\c&H00FFFFFF&}
+Dialogue: 0,0:00:19.94,0:00:20.22,Default,,0,0,0,,{\c&H0000FFFF&}BLACK{\c&H00FFFFFF&} SKY
+Dialogue: 0,0:00:20.23,0:00:20.63,Default,,0,0,0,,BLACK {\c&H0000FFFF&}SKY{\c&H00FFFFFF&}
+Dialogue: 0,0:00:20.64,0:00:20.81,Default,,0,0,0,,{\c&H0000FFFF&}WITH{\c&H00FFFFFF&} A
+Dialogue: 0,0:00:20.82,0:00:20.88,Default,,0,0,0,,WITH {\c&H0000FFFF&}A{\c&H00FFFFFF&}
+Dialogue: 0,0:00:20.89,0:00:21.50,Default,,0,0,0,,{\c&H0000FFFF&}PARACHUTE{\c&H00FFFFFF&} FIFTY 💰
+Dialogue: 0,0:00:22.32,0:00:22.71,Default,,0,0,0,,PARACHUTE {\c&H0000FFFF&}FIFTY{\c&H00FFFFFF&}
+Dialogue: 0,0:00:22.72,0:00:22.97,Default,,0,0,0,,{\c&H0000FFFF&}YEARS{\c&H00FFFFFF&} LATER
+Dialogue: 0,0:00:22.98,0:00:23.31,Default,,0,0,0,,YEARS {\c&H0000FFFF&}LATER{\c&H00FFFFFF&}
+Dialogue: 0,0:00:23.51,0:00:23.59,Default,,0,0,0,,{\c&H0000FFFF&}THE{\c&H00FFFFFF&} FBI
+Dialogue: 0,0:00:23.60,0:00:24.17,Default,,0,0,0,,THE {\c&H0000FFFF&}FBI{\c&H00FFFFFF&}
+Dialogue: 0,0:00:24.18,0:00:24.61,Default,,0,0,0,,{\c&H0000FFFF&}CLOSED{\c&H00FFFFFF&} THE
+Dialogue: 0,0:00:24.62,0:00:24.70,Default,,0,0,0,,CLOSED {\c&H0000FFFF&}THE{\c&H00FFFFFF&}
+Dialogue: 0,0:00:24.71,0:00:25.21,Default,,0,0,0,,{\c&H0000FFFF&}FILE{\c&H00FFFFFF&} HE
+Dialogue: 0,0:00:26.02,0:00:26.17,Default,,0,0,0,,FILE {\c&H0000FFFF&}HE{\c&H00FFFFFF&}
+Dialogue: 0,0:00:26.19,0:00:26.35,Default,,0,0,0,,{\c&H0000FFFF&}WAS{\c&H00FFFFFF&} NEVER
+Dialogue: 0,0:00:26.36,0:00:26.66,Default,,0,0,0,,WAS {\c&H0000FFFF&}NEVER{\c&H00FFFFFF&}
+Dialogue: 0,0:00:26.67,0:00:27.19,Default,,0,0,0,,{\c&H0000FFFF&}FOUND{\c&H00FFFFFF&} WHAT
+Dialogue: 0,0:00:28.00,0:00:28.18,Default,,0,0,0,,FOUND {\c&H0000FFFF&}WHAT{\c&H00FFFFFF&}
+Dialogue: 0,0:00:28.19,0:00:28.25,Default,,0,0,0,,{\c&H0000FFFF&}DO{\c&H00FFFFFF&} YOU
+Dialogue: 0,0:00:28.26,0:00:28.34,Default,,0,0,0,,DO {\c&H0000FFFF&}YOU{\c&H00FFFFFF&}
+Dialogue: 0,0:00:28.36,0:00:28.58,Default,,0,0,0,,{\c&H0000FFFF&}THINK{\c&H00FFFFFF&} HAPPENED
+Dialogue: 0,0:00:28.59,0:00:28.90,Default,,0,0,0,,THINK {\c&H0000FFFF&}HAPPENED{\c&H00FFFFFF&}
+Dialogue: 0,0:00:28.91,0:00:28.98,Default,,0,0,0,,{\c&H0000FFFF&}TO{\c&H00FFFFFF&} HIM
+Dialogue: 0,0:00:28.99,0:00:29.25,Default,,0,0,0,,TO {\c&H0000FFFF&}HIM{\c&H00FFFFFF&}

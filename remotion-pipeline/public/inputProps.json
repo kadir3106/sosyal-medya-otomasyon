@@ -1,0 +1,220 @@
+{
+  "title": "The Silent Architecture of Power",
+  "fps": 30,
+  "scenes": [
+    {
+      "index": 0,
+      "text": "The truly wealthy never raise their voice.",
+      "visualPrompt": "Cinematic 9:16 vertical shot of an ultra high-end penthouse overlooking Monaco at dusk, crystal glass of vintage whiskey on marble table, 8k resolution, photorealistic, luxury aesthetic, anamorphic lens, moody lighting",
+      "durationSeconds": 3.5,
+      "assetType": "video"
+    },
+    {
+      "index": 1,
+      "text": "Power doesn't need to shout to command the entire room.",
+      "visualPrompt": "Cinematic vertical shot of tailored bespoke midnight blue suit, subtle Patek Philippe timepiece gleaming in warm amber interior lighting, executive boardroom, cinematic depth of field, 8k",
+      "durationSeconds": 4,
+      "assetType": "video"
+    },
+    {
+      "index": 2,
+      "text": "Control your emotions, or someone else will control your future.",
+      "visualPrompt": "High-angle vertical drone shot of a sleek black Rolls Royce Phantom gliding silently through rainy Tokyo streets at midnight, golden neon reflections on wet asphalt, cinematic slow motion",
+      "durationSeconds": 4,
+      "assetType": "video"
+    },
+    {
+      "index": 3,
+      "text": "Silence is not weakness. It is ultimate authority.",
+      "visualPrompt": "Close-up vertical shot of stoic man in luxury dark cashmere coat looking calmly towards camera, cinematic rim light, dark opulent palace background, 35mm film grain, 8k",
+      "durationSeconds": 3.5,
+      "assetType": "video"
+    }
+  ],
+  "audioUrl": "",
+  "words": [
+    {
+      "word": "THE",
+      "start": 0.2,
+      "end": 0.42
+    },
+    {
+      "word": "TRULY",
+      "start": 0.51,
+      "end": 0.88
+    },
+    {
+      "word": "WEALTHY",
+      "start": 0.96,
+      "end": 1.48
+    },
+    {
+      "word": "NEVER",
+      "start": 1.56,
+      "end": 1.94
+    },
+    {
+      "word": "RAISE",
+      "start": 2.02,
+      "end": 2.4
+    },
+    {
+      "word": "THEIR",
+      "start": 2.48,
+      "end": 2.85
+    },
+    {
+      "word": "VOICE.",
+      "start": 2.93,
+      "end": 3.38
+    },
+    {
+      "word": "POWER",
+      "start": 3.46,
+      "end": 3.83
+    },
+    {
+      "word": "DOESN'T",
+      "start": 3.92,
+      "end": 4.44
+    },
+    {
+      "word": "NEED",
+      "start": 4.52,
+      "end": 4.82
+    },
+    {
+      "word": "TO",
+      "start": 4.9,
+      "end": 5.1
+    },
+    {
+      "word": "SHOUT",
+      "start": 5.18,
+      "end": 5.55
+    },
+    {
+      "word": "TO",
+      "start": 5.63,
+      "end": 5.83
+    },
+    {
+      "word": "COMMAND",
+      "start": 5.92,
+      "end": 6.44
+    },
+    {
+      "word": "THE",
+      "start": 6.52,
+      "end": 6.74
+    },
+    {
+      "word": "ENTIRE",
+      "start": 6.82,
+      "end": 7.27
+    },
+    {
+      "word": "ROOM.",
+      "start": 7.35,
+      "end": 7.73
+    },
+    {
+      "word": "CONTROL",
+      "start": 7.81,
+      "end": 8.33
+    },
+    {
+      "word": "YOUR",
+      "start": 8.41,
+      "end": 8.71
+    },
+    {
+      "word": "EMOTIONS,",
+      "start": 8.79,
+      "end": 9.45
+    },
+    {
+      "word": "OR",
+      "start": 9.53,
+      "end": 9.72
+    },
+    {
+      "word": "SOMEONE",
+      "start": 9.8,
+      "end": 10.33
+    },
+    {
+      "word": "ELSE",
+      "start": 10.41,
+      "end": 10.71
+    },
+    {
+      "word": "WILL",
+      "start": 10.79,
+      "end": 11.09
+    },
+    {
+      "word": "CONTROL",
+      "start": 11.17,
+      "end": 11.7
+    },
+    {
+      "word": "YOUR",
+      "start": 11.78,
+      "end": 12.08
+    },
+    {
+      "word": "FUTURE.",
+      "start": 12.16,
+      "end": 12.68
+    },
+    {
+      "word": "SILENCE",
+      "start": 12.76,
+      "end": 13.29
+    },
+    {
+      "word": "IS",
+      "start": 13.37,
+      "end": 13.57
+    },
+    {
+      "word": "NOT",
+      "start": 13.65,
+      "end": 13.87
+    },
+    {
+      "word": "WEAKNESS.",
+      "start": 13.95,
+      "end": 14.6
+    },
+    {
+      "word": "IT",
+      "start": 14.68,
+      "end": 14.88
+    },
+    {
+      "word": "IS",
+      "start": 14.96,
+      "end": 15.16
+    },
+    {
+      "word": "ULTIMATE",
+      "start": 15.24,
+      "end": 15.84
+    },
+    {
+      "word": "AUTHORITY.",
+      "start": 15.92,
+      "end": 16.57
+    }
+  ],
+  "theme": {
+    "accentColor": "#D4AF37",
+    "secondaryColor": "#38BDF8",
+    "textColor": "#FFFFFF",
+    "badgeBg": "rgba(8, 8, 12, 0.85)",
+    "brandName": "PEAK MOTIVATION",
+    "fontFamily": "system-ui, -apple-system, sans-serif"
+  }
+}

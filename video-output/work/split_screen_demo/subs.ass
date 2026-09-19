@@ -1,0 +1,85 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,DejaVu Sans,92,&H00FFFFFF,&H0000FFFF,&H000A0A0A,&H80000000,-1,0,0,0,100,100,0,0,1,6,2,2,60,60,520,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.09,0:00:00.35,Default,,0,0,0,,{\c&H0000FFFF&}OLD{\c&H00FFFFFF&} HUNTERS
+Dialogue: 0,0:00:00.37,0:00:00.78,Default,,0,0,0,,OLD {\c&H0000FFFF&}HUNTERS{\c&H00FFFFFF&}
+Dialogue: 0,0:00:00.80,0:00:00.94,Default,,0,0,0,,{\c&H0000FFFF&}HAVE{\c&H00FFFFFF&} ONE
+Dialogue: 0,0:00:00.95,0:00:01.19,Default,,0,0,0,,HAVE {\c&H0000FFFF&}ONE{\c&H00FFFFFF&}
+Dialogue: 0,0:00:01.20,0:00:01.58,Default,,0,0,0,,{\c&H0000FFFF&}GOLDEN{\c&H00FFFFFF&} RULE
+Dialogue: 0,0:00:01.59,0:00:01.83,Default,,0,0,0,,GOLDEN {\c&H0000FFFF&}RULE{\c&H00FFFFFF&}
+Dialogue: 0,0:00:01.84,0:00:01.97,Default,,0,0,0,,{\c&H0000FFFF&}THEY{\c&H00FFFFFF&} NEVER
+Dialogue: 0,0:00:01.99,0:00:02.28,Default,,0,0,0,,THEY {\c&H0000FFFF&}NEVER{\c&H00FFFFFF&}
+Dialogue: 0,0:00:02.30,0:00:02.65,Default,,0,0,0,,{\c&H0000FFFF&}BREAK{\c&H00FFFFFF&} NEVER
+Dialogue: 0,0:00:02.96,0:00:03.29,Default,,0,0,0,,BREAK {\c&H0000FFFF&}NEVER{\c&H00FFFFFF&}
+Dialogue: 0,0:00:03.31,0:00:03.68,Default,,0,0,0,,{\c&H0000FFFF&}WHISTLE{\c&H00FFFFFF&} AT
+Dialogue: 0,0:00:03.69,0:00:03.80,Default,,0,0,0,,WHISTLE {\c&H0000FFFF&}AT{\c&H00FFFFFF&}
+Dialogue: 0,0:00:03.81,0:00:04.07,Default,,0,0,0,,{\c&H0000FFFF&}NIGHT{\c&H00FFFFFF&} IN
+Dialogue: 0,0:00:04.08,0:00:04.15,Default,,0,0,0,,NIGHT {\c&H0000FFFF&}IN{\c&H00FFFFFF&}
+Dialogue: 0,0:00:04.16,0:00:04.27,Default,,0,0,0,,{\c&H0000FFFF&}THE{\c&H00FFFFFF&} DEEP
+Dialogue: 0,0:00:04.28,0:00:04.50,Default,,0,0,0,,THE {\c&H0000FFFF&}DEEP{\c&H00FFFFFF&}
+Dialogue: 0,0:00:04.51,0:00:04.99,Default,,0,0,0,,{\c&H0000FFFF&}WOODS{\c&H00FFFFFF&} THEY
+Dialogue: 0,0:00:05.80,0:00:05.99,Default,,0,0,0,,WOODS {\c&H0000FFFF&}THEY{\c&H00FFFFFF&}
+Dialogue: 0,0:00:06.01,0:00:06.26,Default,,0,0,0,,{\c&H0000FFFF&}SAY{\c&H00FFFFFF&} SOUND
+Dialogue: 0,0:00:06.27,0:00:06.61,Default,,0,0,0,,SAY {\c&H0000FFFF&}SOUND{\c&H00FFFFFF&}
+Dialogue: 0,0:00:06.63,0:00:07.04,Default,,0,0,0,,{\c&H0000FFFF&}TRAVELS{\c&H00FFFFFF&} DIFFERENTLY
+Dialogue: 0,0:00:07.05,0:00:07.47,Default,,0,0,0,,TRAVELS {\c&H0000FFFF&}DIFFERENTLY{\c&H00FFFFFF&}
+Dialogue: 0,0:00:07.48,0:00:07.54,Default,,0,0,0,,{\c&H0000FFFF&}IN{\c&H00FFFFFF&} THE
+Dialogue: 0,0:00:07.55,0:00:07.65,Default,,0,0,0,,IN {\c&H0000FFFF&}THE{\c&H00FFFFFF&}
+Dialogue: 0,0:00:07.66,0:00:08.05,Default,,0,0,0,,{\c&H0000FFFF&}DARK{\c&H00FFFFFF&} BUT
+Dialogue: 0,0:00:08.22,0:00:08.35,Default,,0,0,0,,DARK {\c&H0000FFFF&}BUT{\c&H00FFFFFF&}
+Dialogue: 0,0:00:08.36,0:00:08.54,Default,,0,0,0,,{\c&H0000FFFF&}THAT{\c&H00FFFFFF&} IS
+Dialogue: 0,0:00:08.55,0:00:08.66,Default,,0,0,0,,THAT {\c&H0000FFFF&}IS{\c&H00FFFFFF&}
+Dialogue: 0,0:00:08.67,0:00:08.92,Default,,0,0,0,,{\c&H0000FFFF&}NOT{\c&H00FFFFFF&} THE
+Dialogue: 0,0:00:08.94,0:00:09.02,Default,,0,0,0,,NOT {\c&H0000FFFF&}THE{\c&H00FFFFFF&}
+Dialogue: 0,0:00:09.03,0:00:09.32,Default,,0,0,0,,{\c&H0000FFFF&}REAL{\c&H00FFFFFF&} REASON
+Dialogue: 0,0:00:09.33,0:00:09.78,Default,,0,0,0,,REAL {\c&H0000FFFF&}REASON{\c&H00FFFFFF&}
+Dialogue: 0,0:00:10.60,0:00:11.04,Default,,0,0,0,,{\c&H0000FFFF&}WHISTLING{\c&H00FFFFFF&} MIMICS
+Dialogue: 0,0:00:11.05,0:00:11.38,Default,,0,0,0,,WHISTLING {\c&H0000FFFF&}MIMICS{\c&H00FFFFFF&}
+Dialogue: 0,0:00:11.39,0:00:11.47,Default,,0,0,0,,{\c&H0000FFFF&}A{\c&H00FFFFFF&} DISTRESS
+Dialogue: 0,0:00:11.48,0:00:11.96,Default,,0,0,0,,A {\c&H0000FFFF&}DISTRESS{\c&H00FFFFFF&}
+Dialogue: 0,0:00:11.97,0:00:12.23,Default,,0,0,0,,{\c&H0000FFFF&}CALL{\c&H00FFFFFF&} OF
+Dialogue: 0,0:00:12.25,0:00:12.34,Default,,0,0,0,,CALL {\c&H0000FFFF&}OF{\c&H00FFFFFF&}
+Dialogue: 0,0:00:12.35,0:00:12.69,Default,,0,0,0,,{\c&H0000FFFF&}WOUNDED{\c&H00FFFFFF&} PREY
+Dialogue: 0,0:00:12.70,0:00:13.09,Default,,0,0,0,,WOUNDED {\c&H0000FFFF&}PREY{\c&H00FFFFFF&}
+Dialogue: 0,0:00:13.91,0:00:14.05,Default,,0,0,0,,{\c&H0000FFFF&}IN{\c&H00FFFFFF&} THE
+Dialogue: 0,0:00:14.07,0:00:14.13,Default,,0,0,0,,IN {\c&H0000FFFF&}THE{\c&H00FFFFFF&}
+Dialogue: 0,0:00:14.14,0:00:14.75,Default,,0,0,0,,{\c&H0000FFFF&}SHADOWS{\c&H00FFFFFF&} PREDATORS
+Dialogue: 0,0:00:14.88,0:00:15.45,Default,,0,0,0,,SHADOWS {\c&H0000FFFF&}PREDATORS{\c&H00FFFFFF&}
+Dialogue: 0,0:00:15.54,0:00:15.63,Default,,0,0,0,,{\c&H0000FFFF&}AND{\c&H00FFFFFF&} THINGS
+Dialogue: 0,0:00:15.64,0:00:15.97,Default,,0,0,0,,AND {\c&H0000FFFF&}THINGS{\c&H00FFFFFF&}
+Dialogue: 0,0:00:15.98,0:00:16.28,Default,,0,0,0,,{\c&H0000FFFF&}WITHOUT{\c&H00FFFFFF&} NAMES
+Dialogue: 0,0:00:16.29,0:00:16.63,Default,,0,0,0,,WITHOUT {\c&H0000FFFF&}NAMES{\c&H00FFFFFF&}
+Dialogue: 0,0:00:16.64,0:00:16.75,Default,,0,0,0,,{\c&H0000FFFF&}DO{\c&H00FFFFFF&} NOT
+Dialogue: 0,0:00:16.76,0:00:17.02,Default,,0,0,0,,DO {\c&H0000FFFF&}NOT{\c&H00FFFFFF&}
+Dialogue: 0,0:00:17.03,0:00:17.17,Default,,0,0,0,,{\c&H0000FFFF&}RUN{\c&H00FFFFFF&} AWAY
+Dialogue: 0,0:00:17.19,0:00:17.45,Default,,0,0,0,,RUN {\c&H0000FFFF&}AWAY{\c&H00FFFFFF&}
+Dialogue: 0,0:00:17.46,0:00:17.61,Default,,0,0,0,,{\c&H0000FFFF&}FROM{\c&H00FFFFFF&} A
+Dialogue: 0,0:00:17.63,0:00:17.67,Default,,0,0,0,,FROM {\c&H0000FFFF&}A{\c&H00FFFFFF&}
+Dialogue: 0,0:00:17.69,0:00:18.08,Default,,0,0,0,,{\c&H0000FFFF&}WHISTLE{\c&H00FFFFFF&} THEY
+Dialogue: 0,0:00:18.35,0:00:18.47,Default,,0,0,0,,WHISTLE {\c&H0000FFFF&}THEY{\c&H00FFFFFF&}
+Dialogue: 0,0:00:18.48,0:00:18.83,Default,,0,0,0,,{\c&H0000FFFF&}STALK{\c&H00FFFFFF&} TOWARDS
+Dialogue: 0,0:00:18.84,0:00:19.17,Default,,0,0,0,,STALK {\c&H0000FFFF&}TOWARDS{\c&H00FFFFFF&}
+Dialogue: 0,0:00:19.19,0:00:19.40,Default,,0,0,0,,{\c&H0000FFFF&}IT{\c&H00FFFFFF&} IF
+Dialogue: 0,0:00:20.22,0:00:20.39,Default,,0,0,0,,IT {\c&H0000FFFF&}IF{\c&H00FFFFFF&}
+Dialogue: 0,0:00:20.40,0:00:20.53,Default,,0,0,0,,{\c&H0000FFFF&}YOU{\c&H00FFFFFF&} EVER
+Dialogue: 0,0:00:20.54,0:00:20.77,Default,,0,0,0,,YOU {\c&H0000FFFF&}EVER{\c&H00FFFFFF&}
+Dialogue: 0,0:00:20.78,0:00:20.97,Default,,0,0,0,,{\c&H0000FFFF&}HEAR{\c&H00FFFFFF&} A
+Dialogue: 0,0:00:20.98,0:00:21.04,Default,,0,0,0,,HEAR {\c&H0000FFFF&}A{\c&H00FFFFFF&}
+Dialogue: 0,0:00:21.05,0:00:21.34,Default,,0,0,0,,{\c&H0000FFFF&}WHISTLE{\c&H00FFFFFF&} BACK
+Dialogue: 0,0:00:21.35,0:00:21.70,Default,,0,0,0,,WHISTLE {\c&H0000FFFF&}BACK{\c&H00FFFFFF&}
+Dialogue: 0,0:00:21.89,0:00:22.23,Default,,0,0,0,,{\c&H0000FFFF&}RUN{\c&H00FFFFFF&} HAVE
+Dialogue: 0,0:00:23.05,0:00:23.20,Default,,0,0,0,,RUN {\c&H0000FFFF&}HAVE{\c&H00FFFFFF&}
+Dialogue: 0,0:00:23.21,0:00:23.33,Default,,0,0,0,,{\c&H0000FFFF&}YOU{\c&H00FFFFFF&} EVER
+Dialogue: 0,0:00:23.34,0:00:23.55,Default,,0,0,0,,YOU {\c&H0000FFFF&}EVER{\c&H00FFFFFF&}
+Dialogue: 0,0:00:23.57,0:00:23.77,Default,,0,0,0,,{\c&H0000FFFF&}HEARD{\c&H00FFFFFF&} IT
+Dialogue: 0,0:00:23.78,0:00:23.97,Default,,0,0,0,,HEARD {\c&H0000FFFF&}IT{\c&H00FFFFFF&}

@@ -1,0 +1,10 @@
+﻿.env
+.env.*
+*.mp4
+*.mp3
+node_modules/
+__pycache__/
+.venv/
+dist/
+output/
+.cache/

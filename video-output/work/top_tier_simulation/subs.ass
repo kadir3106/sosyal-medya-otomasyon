@@ -1,0 +1,88 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,DejaVu Sans,92,&H00FFFFFF,&H0000FFFF,&H000A0A0A,&H80000000,-1,0,0,0,100,100,0,0,1,6,2,2,60,60,520,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.09,0:00:01.35,Default,,0,0,0,,{\c&H0000FFFF&}IN 2014{\c&H00FFFFFF&} THOUSANDS
+Dialogue: 0,0:00:01.58,0:00:02.01,Default,,0,0,0,,IN 2014 {\c&H0000FFFF&}THOUSANDS{\c&H00FFFFFF&}
+Dialogue: 0,0:00:02.02,0:00:02.10,Default,,0,0,0,,{\c&H0000FFFF&}OF{\c&H00FFFFFF&} PEOPLE
+Dialogue: 0,0:00:02.11,0:00:02.40,Default,,0,0,0,,OF {\c&H0000FFFF&}PEOPLE{\c&H00FFFFFF&}
+Dialogue: 0,0:00:02.42,0:00:02.77,Default,,0,0,0,,{\c&H0000FFFF&}ACROSS{\c&H00FFFFFF&} CALIFORNIA
+Dialogue: 0,0:00:02.78,0:00:03.34,Default,,0,0,0,,ACROSS {\c&H0000FFFF&}CALIFORNIA{\c&H00FFFFFF&}
+Dialogue: 0,0:00:03.35,0:00:03.58,Default,,0,0,0,,{\c&H0000FFFF&}LOOKED{\c&H00FFFFFF&} UP
+Dialogue: 0,0:00:03.60,0:00:03.78,Default,,0,0,0,,LOOKED {\c&H0000FFFF&}UP{\c&H00FFFFFF&}
+Dialogue: 0,0:00:03.80,0:00:03.90,Default,,0,0,0,,{\c&H0000FFFF&}AND{\c&H00FFFFFF&} SAW
+Dialogue: 0,0:00:03.91,0:00:04.15,Default,,0,0,0,,AND {\c&H0000FFFF&}SAW{\c&H00FFFFFF&}
+Dialogue: 0,0:00:04.16,0:00:04.40,Default,,0,0,0,,{\c&H0000FFFF&}TWO{\c&H00FFFFFF&} SUNS
+Dialogue: 0,0:00:04.41,0:00:04.74,Default,,0,0,0,,TWO {\c&H0000FFFF&}SUNS{\c&H00FFFFFF&}
+Dialogue: 0,0:00:04.75,0:00:05.17,Default,,0,0,0,,{\c&H0000FFFF&}SHINING{\c&H00FFFFFF&} IN
+Dialogue: 0,0:00:05.19,0:00:05.23,Default,,0,0,0,,SHINING {\c&H0000FFFF&}IN{\c&H00FFFFFF&}
+Dialogue: 0,0:00:05.24,0:00:05.30,Default,,0,0,0,,{\c&H0000FFFF&}THE{\c&H00FFFFFF&} SKY
+Dialogue: 0,0:00:05.31,0:00:05.77,Default,,0,0,0,,THE {\c&H0000FFFF&}SKY{\c&H00FFFFFF&}
+Dialogue: 0,0:00:06.58,0:00:06.92,Default,,0,0,0,,{\c&H0000FFFF&}CELL{\c&H00FFFFFF&} PHONE
+Dialogue: 0,0:00:06.93,0:00:07.24,Default,,0,0,0,,CELL {\c&H0000FFFF&}PHONE{\c&H00FFFFFF&}
+Dialogue: 0,0:00:07.25,0:00:07.66,Default,,0,0,0,,{\c&H0000FFFF&}CAMERAS{\c&H00FFFFFF&} FLOODED
+Dialogue: 0,0:00:07.67,0:00:07.99,Default,,0,0,0,,CAMERAS {\c&H0000FFFF&}FLOODED{\c&H00FFFFFF&}
+Dialogue: 0,0:00:08.00,0:00:08.07,Default,,0,0,0,,{\c&H0000FFFF&}THE{\c&H00FFFFFF&} INTERNET
+Dialogue: 0,0:00:08.08,0:00:08.50,Default,,0,0,0,,THE {\c&H0000FFFF&}INTERNET{\c&H00FFFFFF&}
+Dialogue: 0,0:00:08.76,0:00:09.17,Default,,0,0,0,,{\c&H0000FFFF&}SHOWING{\c&H00FFFFFF&} TWO 🏆
+Dialogue: 0,0:00:09.18,0:00:09.40,Default,,0,0,0,,SHOWING {\c&H0000FFFF&}TWO{\c&H00FFFFFF&}
+Dialogue: 0,0:00:09.41,0:00:09.90,Default,,0,0,0,,{\c&H0000FFFF&}IDENTICAL{\c&H00FFFFFF&} BURNING
+Dialogue: 0,0:00:09.91,0:00:10.25,Default,,0,0,0,,IDENTICAL {\c&H0000FFFF&}BURNING{\c&H00FFFFFF&}
+Dialogue: 0,0:00:10.26,0:00:10.52,Default,,0,0,0,,{\c&H0000FFFF&}ORBS{\c&H00FFFFFF&} SIDE
+Dialogue: 0,0:00:10.53,0:00:10.81,Default,,0,0,0,,ORBS {\c&H0000FFFF&}SIDE{\c&H00FFFFFF&}
+Dialogue: 0,0:00:10.82,0:00:10.95,Default,,0,0,0,,{\c&H0000FFFF&}BY{\c&H00FFFFFF&} SIDE
+Dialogue: 0,0:00:10.96,0:00:11.46,Default,,0,0,0,,BY {\c&H0000FFFF&}SIDE{\c&H00FFFFFF&}
+Dialogue: 0,0:00:12.26,0:00:13.00,Default,,0,0,0,,{\c&H0000FFFF&}SCIENTISTS{\c&H00FFFFFF&} RUSHED
+Dialogue: 0,0:00:13.01,0:00:13.29,Default,,0,0,0,,SCIENTISTS {\c&H0000FFFF&}RUSHED{\c&H00FFFFFF&}
+Dialogue: 0,0:00:13.30,0:00:13.38,Default,,0,0,0,,{\c&H0000FFFF&}TO{\c&H00FFFFFF&} CALL
+Dialogue: 0,0:00:13.39,0:00:13.64,Default,,0,0,0,,TO {\c&H0000FFFF&}CALL{\c&H00FFFFFF&}
+Dialogue: 0,0:00:13.65,0:00:13.72,Default,,0,0,0,,{\c&H0000FFFF&}IT{\c&H00FFFFFF&} AN
+Dialogue: 0,0:00:13.73,0:00:13.84,Default,,0,0,0,,IT {\c&H0000FFFF&}AN{\c&H00FFFFFF&}
+Dialogue: 0,0:00:13.85,0:00:14.47,Default,,0,0,0,,{\c&H0000FFFF&}ATMOSPHERIC{\c&H00FFFFFF&} REFLECTION
+Dialogue: 0,0:00:14.48,0:00:15.05,Default,,0,0,0,,ATMOSPHERIC {\c&H0000FFFF&}REFLECTION{\c&H00FFFFFF&}
+Dialogue: 0,0:00:15.33,0:00:15.51,Default,,0,0,0,,{\c&H0000FFFF&}BUT{\c&H00FFFFFF&} PILOTS
+Dialogue: 0,0:00:15.52,0:00:15.96,Default,,0,0,0,,BUT {\c&H0000FFFF&}PILOTS{\c&H00FFFFFF&}
+Dialogue: 0,0:00:15.98,0:00:16.10,Default,,0,0,0,,{\c&H0000FFFF&}AT{\c&H00FFFFFF&} 30 THOUSAND FEET
+Dialogue: 0,0:00:16.12,0:00:17.09,Default,,0,0,0,,AT {\c&H0000FFFF&}30 THOUSAND FEET{\c&H00FFFFFF&}
+Dialogue: 0,0:00:17.10,0:00:17.59,Default,,0,0,0,,{\c&H0000FFFF&}CONFIRMED{\c&H00FFFFFF&} SEEING
+Dialogue: 0,0:00:17.60,0:00:17.90,Default,,0,0,0,,CONFIRMED {\c&H0000FFFF&}SEEING{\c&H00FFFFFF&}
+Dialogue: 0,0:00:17.92,0:00:18.16,Default,,0,0,0,,{\c&H0000FFFF&}BOTH{\c&H00FFFFFF&} SPHERES
+Dialogue: 0,0:00:18.17,0:00:18.77,Default,,0,0,0,,BOTH {\c&H0000FFFF&}SPHERES{\c&H00FFFFFF&}
+Dialogue: 0,0:00:19.57,0:00:19.91,Default,,0,0,0,,{\c&H0000FFFF&}THREE{\c&H00FFFFFF&} HOURS
+Dialogue: 0,0:00:19.92,0:00:20.28,Default,,0,0,0,,THREE {\c&H0000FFFF&}HOURS{\c&H00FFFFFF&}
+Dialogue: 0,0:00:20.29,0:00:20.61,Default,,0,0,0,,{\c&H0000FFFF&}LATER{\c&H00FFFFFF&} THE
+Dialogue: 0,0:00:20.81,0:00:20.91,Default,,0,0,0,,LATER {\c&H0000FFFF&}THE{\c&H00FFFFFF&}
+Dialogue: 0,0:00:20.92,0:00:21.27,Default,,0,0,0,,{\c&H0000FFFF&}SECOND{\c&H00FFFFFF&} SUN
+Dialogue: 0,0:00:21.28,0:00:21.57,Default,,0,0,0,,SECOND {\c&H0000FFFF&}SUN{\c&H00FFFFFF&}
+Dialogue: 0,0:00:21.58,0:00:21.91,Default,,0,0,0,,{\c&H0000FFFF&}SIMPLY{\c&H00FFFFFF&} VANISHED
+Dialogue: 0,0:00:21.92,0:00:22.39,Default,,0,0,0,,SIMPLY {\c&H0000FFFF&}VANISHED{\c&H00FFFFFF&}
+Dialogue: 0,0:00:22.40,0:00:22.69,Default,,0,0,0,,{\c&H0000FFFF&}WITHOUT{\c&H00FFFFFF&} A
+Dialogue: 0,0:00:22.71,0:00:22.75,Default,,0,0,0,,WITHOUT {\c&H0000FFFF&}A{\c&H00FFFFFF&}
+Dialogue: 0,0:00:22.76,0:00:23.29,Default,,0,0,0,,{\c&H0000FFFF&}SOUND{\c&H00FFFFFF&} WAS
+Dialogue: 0,0:00:24.10,0:00:24.29,Default,,0,0,0,,SOUND {\c&H0000FFFF&}WAS{\c&H00FFFFFF&}
+Dialogue: 0,0:00:24.31,0:00:24.45,Default,,0,0,0,,{\c&H0000FFFF&}IT{\c&H00FFFFFF&} REALLY
+Dialogue: 0,0:00:24.46,0:00:24.74,Default,,0,0,0,,IT {\c&H0000FFFF&}REALLY{\c&H00FFFFFF&}
+Dialogue: 0,0:00:24.75,0:00:24.78,Default,,0,0,0,,{\c&H0000FFFF&}A{\c&H00FFFFFF&} NATURAL
+Dialogue: 0,0:00:24.80,0:00:25.23,Default,,0,0,0,,A {\c&H0000FFFF&}NATURAL{\c&H00FFFFFF&}
+Dialogue: 0,0:00:25.24,0:00:25.70,Default,,0,0,0,,{\c&H0000FFFF&}ILLUSION{\c&H00FFFFFF&} OR
+Dialogue: 0,0:00:25.93,0:00:26.05,Default,,0,0,0,,ILLUSION {\c&H0000FFFF&}OR{\c&H00FFFFFF&}
+Dialogue: 0,0:00:26.06,0:00:26.19,Default,,0,0,0,,{\c&H0000FFFF&}DID{\c&H00FFFFFF&} THE
+Dialogue: 0,0:00:26.20,0:00:26.26,Default,,0,0,0,,DID {\c&H0000FFFF&}THE{\c&H00FFFFFF&}
+Dialogue: 0,0:00:26.27,0:00:26.95,Default,,0,0,0,,{\c&H0000FFFF&}SIMULATION{\c&H00FFFFFF&} JUST
+Dialogue: 0,0:00:26.96,0:00:27.13,Default,,0,0,0,,SIMULATION {\c&H0000FFFF&}JUST{\c&H00FFFFFF&}
+Dialogue: 0,0:00:27.14,0:00:27.38,Default,,0,0,0,,{\c&H0000FFFF&}DROP{\c&H00FFFFFF&} A
+Dialogue: 0,0:00:27.39,0:00:27.45,Default,,0,0,0,,DROP {\c&H0000FFFF&}A{\c&H00FFFFFF&}
+Dialogue: 0,0:00:27.46,0:00:27.87,Default,,0,0,0,,{\c&H0000FFFF&}FRAME{\c&H00FFFFFF&} WHAT
+Dialogue: 0,0:00:28.67,0:00:28.83,Default,,0,0,0,,FRAME {\c&H0000FFFF&}WHAT{\c&H00FFFFFF&}
+Dialogue: 0,0:00:28.84,0:00:28.90,Default,,0,0,0,,{\c&H0000FFFF&}DO{\c&H00FFFFFF&} YOU
+Dialogue: 0,0:00:28.91,0:00:29.00,Default,,0,0,0,,DO {\c&H0000FFFF&}YOU{\c&H00FFFFFF&}
+Dialogue: 0,0:00:29.01,0:00:29.45,Default,,0,0,0,,{\c&H0000FFFF&}THINK{\c&H00FFFFFF&}

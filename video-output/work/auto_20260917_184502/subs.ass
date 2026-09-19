@@ -1,0 +1,71 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,DejaVu Sans,90,&H00F8F9FA&,&H0000D7FF&,&H000D0D0D&,&H90000000,-1,0,0,0,100,100,1,0,1,6,3,2,60,60,480,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:00.55,Default,,0,0,0,,{\c&H0000D7FF&}CASINOS{\c&H00F8F9FA&} HAVE
+Dialogue: 0,0:00:00.60,0:00:00.73,Default,,0,0,0,,CASINOS {\c&H0000D7FF&}HAVE{\c&H00F8F9FA&}
+Dialogue: 0,0:00:00.77,0:00:00.89,Default,,0,0,0,,{\c&H0000D7FF&}NO{\c&H00F8F9FA&} CLOCKS
+Dialogue: 0,0:00:00.96,0:00:01.27,Default,,0,0,0,,NO {\c&H0000D7FF&}CLOCKS{\c&H00F8F9FA&}
+Dialogue: 0,0:00:01.32,0:00:01.40,Default,,0,0,0,,{\c&H0000D7FF&}ON{\c&H00F8F9FA&} PURPOSE.
+Dialogue: 0,0:00:01.48,0:00:02.07,Default,,0,0,0,,ON {\c&H0000D7FF&}PURPOSE.{\c&H00F8F9FA&}
+Dialogue: 0,0:00:02.40,0:00:02.57,Default,,0,0,0,,{\c&H0000D7FF&}THEY{\c&H00F8F9FA&} BAN
+Dialogue: 0,0:00:02.63,0:00:02.92,Default,,0,0,0,,THEY {\c&H0000D7FF&}BAN{\c&H00F8F9FA&}
+Dialogue: 0,0:00:03.00,0:00:03.36,Default,,0,0,0,,{\c&H0000D7FF&}NATURAL{\c&H00F8F9FA&} LIGHT
+Dialogue: 0,0:00:03.43,0:00:03.69,Default,,0,0,0,,NATURAL {\c&H0000D7FF&}LIGHT{\c&H00F8F9FA&}
+Dialogue: 0,0:00:03.75,0:00:03.84,Default,,0,0,0,,{\c&H0000D7FF&}TO{\c&H00F8F9FA&} WARP
+Dialogue: 0,0:00:03.91,0:00:04.16,Default,,0,0,0,,TO {\c&H0000D7FF&}WARP{\c&H00F8F9FA&}
+Dialogue: 0,0:00:04.22,0:00:04.35,Default,,0,0,0,,{\c&H0000D7FF&}YOUR{\c&H00F8F9FA&} INTERNAL
+Dialogue: 0,0:00:04.41,0:00:04.84,Default,,0,0,0,,YOUR {\c&H0000D7FF&}INTERNAL{\c&H00F8F9FA&}
+Dialogue: 0,0:00:04.89,0:00:05.41,Default,,0,0,0,,{\c&H0000D7FF&}RHYTHM.{\c&H00F8F9FA&} AIR
+Dialogue: 0,0:00:06.10,0:00:06.39,Default,,0,0,0,,RHYTHM. {\c&H0000D7FF&}AIR{\c&H00F8F9FA&}
+Dialogue: 0,0:00:06.46,0:00:06.57,Default,,0,0,0,,{\c&H0000D7FF&}IS{\c&H00F8F9FA&} PUMPED
+Dialogue: 0,0:00:06.62,0:00:06.89,Default,,0,0,0,,IS {\c&H0000D7FF&}PUMPED{\c&H00F8F9FA&}
+Dialogue: 0,0:00:06.95,0:00:07.15,Default,,0,0,0,,{\c&H0000D7FF&}FULL{\c&H00F8F9FA&} OF
+Dialogue: 0,0:00:07.19,0:00:07.24,Default,,0,0,0,,FULL {\c&H0000D7FF&}OF{\c&H00F8F9FA&}
+Dialogue: 0,0:00:07.30,0:00:07.75,Default,,0,0,0,,{\c&H0000D7FF&}OXYGEN{\c&H00F8F9FA&} TO
+Dialogue: 0,0:00:07.96,0:00:08.06,Default,,0,0,0,,OXYGEN {\c&H0000D7FF&}TO{\c&H00F8F9FA&}
+Dialogue: 0,0:00:08.12,0:00:08.28,Default,,0,0,0,,{\c&H0000D7FF&}KEEP{\c&H00F8F9FA&} YOU
+Dialogue: 0,0:00:08.33,0:00:08.41,Default,,0,0,0,,KEEP {\c&H0000D7FF&}YOU{\c&H00F8F9FA&}
+Dialogue: 0,0:00:08.48,0:00:09.45,Default,,0,0,0,,{\c&H0000D7FF&}HYPER-FOCUSED,{\c&H00F8F9FA&} WHILE
+Dialogue: 0,0:00:09.62,0:00:09.88,Default,,0,0,0,,HYPER-FOCUSED, {\c&H0000D7FF&}WHILE{\c&H00F8F9FA&}
+Dialogue: 0,0:00:09.93,0:00:10.21,Default,,0,0,0,,{\c&H0000D7FF&}SLOT{\c&H00F8F9FA&} ALGORITHMS
+Dialogue: 0,0:00:10.28,0:00:10.83,Default,,0,0,0,,SLOT {\c&H0000D7FF&}ALGORITHMS{\c&H00F8F9FA&}
+Dialogue: 0,0:00:10.89,0:00:11.02,Default,,0,0,0,,{\c&H0000D7FF&}ARE{\c&H00F8F9FA&} TUNED
+Dialogue: 0,0:00:11.05,0:00:11.37,Default,,0,0,0,,ARE {\c&H0000D7FF&}TUNED{\c&H00F8F9FA&}
+Dialogue: 0,0:00:11.41,0:00:11.48,Default,,0,0,0,,{\c&H0000D7FF&}TO{\c&H00F8F9FA&} NEAR-MISSES,
+Dialogue: 0,0:00:11.56,0:00:12.34,Default,,0,0,0,,TO {\c&H0000D7FF&}NEAR-MISSES,{\c&H00F8F9FA&}
+Dialogue: 0,0:00:12.55,0:00:12.85,Default,,0,0,0,,{\c&H0000D7FF&}KEEPING{\c&H00F8F9FA&} YOU
+Dialogue: 0,0:00:12.89,0:00:12.97,Default,,0,0,0,,KEEPING {\c&H0000D7FF&}YOU{\c&H00F8F9FA&}
+Dialogue: 0,0:00:13.06,0:00:13.54,Default,,0,0,0,,{\c&H0000D7FF&}ENDLESSLY{\c&H00F8F9FA&} PLAYING.
+Dialogue: 0,0:00:13.60,0:00:14.16,Default,,0,0,0,,ENDLESSLY {\c&H0000D7FF&}PLAYING.{\c&H00F8F9FA&}
+Dialogue: 0,0:00:14.76,0:00:14.99,Default,,0,0,0,,{\c&H0000D7FF&}ONLY{\c&H00F8F9FA&} THE
+Dialogue: 0,0:00:15.05,0:00:15.12,Default,,0,0,0,,ONLY {\c&H0000D7FF&}THE{\c&H00F8F9FA&}
+Dialogue: 0,0:00:15.18,0:00:15.39,Default,,0,0,0,,{\c&H0000D7FF&}TOP{\c&H00F8F9FA&} 1%
+Dialogue: 0,0:00:15.47,0:00:15.92,Default,,0,0,0,,TOP {\c&H0000D7FF&}1%{\c&H00F8F9FA&}
+Dialogue: 0,0:00:16.10,0:00:16.29,Default,,0,0,0,,{\c&H0000D7FF&}KNOW{\c&H00F8F9FA&} HOW
+Dialogue: 0,0:00:16.37,0:00:16.47,Default,,0,0,0,,KNOW {\c&H0000D7FF&}HOW{\c&H00F8F9FA&}
+Dialogue: 0,0:00:16.53,0:00:16.67,Default,,0,0,0,,{\c&H0000D7FF&}THIS{\c&H00F8F9FA&} GAME
+Dialogue: 0,0:00:16.73,0:00:16.93,Default,,0,0,0,,THIS {\c&H0000D7FF&}GAME{\c&H00F8F9FA&}
+Dialogue: 0,0:00:16.97,0:00:17.04,Default,,0,0,0,,{\c&H0000D7FF&}IS{\c&H00F8F9FA&} PLAYED.
+Dialogue: 0,0:00:17.10,0:00:17.56,Default,,0,0,0,,IS {\c&H0000D7FF&}PLAYED.{\c&H00F8F9FA&}
+Dialogue: 0,0:00:18.00,0:00:18.33,Default,,0,0,0,,{\c&H0000D7FF&}FOLLOW{\c&H00F8F9FA&} TO
+Dialogue: 0,0:00:18.40,0:00:18.45,Default,,0,0,0,,FOLLOW {\c&H0000D7FF&}TO{\c&H00F8F9FA&}
+Dialogue: 0,0:00:18.52,0:00:18.73,Default,,0,0,0,,{\c&H0000D7FF&}ENTER{\c&H00F8F9FA&} THE
+Dialogue: 0,0:00:18.78,0:00:18.85,Default,,0,0,0,,ENTER {\c&H0000D7FF&}THE{\c&H00F8F9FA&}
+Dialogue: 0,0:00:18.91,0:00:19.64,Default,,0,0,0,,{\c&H0000D7FF&}1%,{\c&H00F8F9FA&} BECAUSE
+Dialogue: 0,0:00:19.76,0:00:20.01,Default,,0,0,0,,1%, {\c&H0000D7FF&}BECAUSE{\c&H00F8F9FA&}
+Dialogue: 0,0:00:20.05,0:00:20.53,Default,,0,0,0,,{\c&H0000D7FF&}CASINOS{\c&H00F8F9FA&} HAVE
+Dialogue: 0,0:00:20.58,0:00:20.70,Default,,0,0,0,,CASINOS {\c&H0000D7FF&}HAVE{\c&H00F8F9FA&}
+Dialogue: 0,0:00:20.74,0:00:20.86,Default,,0,0,0,,{\c&H0000D7FF&}NO{\c&H00F8F9FA&} CLOCKS
+Dialogue: 0,0:00:20.94,0:00:21.24,Default,,0,0,0,,NO {\c&H0000D7FF&}CLOCKS{\c&H00F8F9FA&}
+Dialogue: 0,0:00:21.29,0:00:21.37,Default,,0,0,0,,{\c&H0000D7FF&}ON{\c&H00F8F9FA&} PURPOSE.
+Dialogue: 0,0:00:21.44,0:00:22.24,Default,,0,0,0,,ON {\c&H0000D7FF&}PURPOSE.{\c&H00F8F9FA&}

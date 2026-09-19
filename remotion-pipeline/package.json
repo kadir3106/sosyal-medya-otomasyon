@@ -1,0 +1,30 @@
+{
+  "name": "remotion-pipeline",
+  "version": "1.0.0",
+  "description": "Hybrid AI Video Generation Pipeline using Fal.ai, ElevenLabs, and Remotion",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "remotion preview src/index.ts",
+    "build": "remotion render src/index.ts LuxuryShort ../video-output/output.mp4",
+    "typecheck": "tsc --noEmit",
+    "orchestrate": "tsx scripts/orchestrate.ts",
+    "orchestrate:mock": "tsx scripts/orchestrate.ts --mock"
+  },
+  "dependencies": {
+    "@remotion/bundler": "^4.0.260",
+    "@remotion/cli": "^4.0.260",
+    "@remotion/renderer": "^4.0.260",
+    "dotenv": "^16.4.7",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "remotion": "^4.0.260",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.9",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3"
+  }
+}
