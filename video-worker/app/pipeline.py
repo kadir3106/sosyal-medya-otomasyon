@@ -34,6 +34,53 @@ MAX_SCENES = 40
 MAX_CLIP_REUSE_RATIO = 1.35
 
 
+def _extract_hook(script: str, max_words: int = 12) -> str:
+    """First sentence (or first N words) for Telegram QA / job telemetry."""
+    text = " ".join((script or "").split())
+    if not text:
+        return ""
+    for sep in (". ", "! ", "? ", ".\n", "!\n", "?\n"):
+        if sep in text:
+            text = text.split(sep, 1)[0].rstrip(".!?") + sep.strip()
+            break
+    words = text.split()
+    if len(words) > max_words:
+        return " ".join(words[:max_words]) + "…"
+    return text
+
+
+def format_approval_caption(result: dict) -> str:
+    """Compact Turkish approval card: title, desc, hook + reuse + TTS + warning."""
+    title = result.get("title") or ""
+    description = result.get("description") or ""
+    q = result.get("quality") or {}
+    hook = q.get("hook") or ""
+    reuse = q.get("clip_reuse_ratio")
+    tts = q.get("tts") or "?"
+    engine = q.get("engine") or "?"
+    warning = q.get("warning") or ""
+
+    lines = [f"🎬 *{title}*", ""]
+    if description:
+        lines.append(description)
+        lines.append("")
+    if hook:
+        lines.append(f'🪝 Hook: _"{hook}"_')
+    reuse_s = f"{reuse}x" if isinstance(reuse, (int, float)) else "?"
+    lines.append(f"⚙️ tekrar {reuse_s} · TTS `{tts}` · {engine}")
+    if warning:
+        if warning == "clip_reuse_ratio_high":
+            lines.append("⚠️ TEKRAR YÜKSEK — slayt hissi riski")
+        elif warning == "tts_edge_fallback":
+            lines.append("⚠️ Edge TTS — ses kalitesi düşük (ElevenLabs önerilir)")
+        else:
+            lines.append(f"⚠️ {warning}")
+    elif tts == "edge":
+        lines.append("ℹ️ Edge TTS kullanıldı (kalite yolu: ElevenLabs)")
+    lines.append("")
+    lines.append("Yukarıdaki videoyu onaylıyor musun?")
+    return "\n".join(lines)
+
 
 async def generate_video(job_id: str, topic: str | None = None) -> dict:
     """Async entrypoint — offloads the blocking pipeline so the event loop
@@ -95,17 +142,22 @@ def _generate_video_sync(job_id: str, topic: str | None = None) -> dict:
         stage_started = time.monotonic()
         # synthesize_speech is async; we're already in a worker thread so
         # asyncio.run is safe (no running loop in this thread).
+        tts_meta: dict = {}
         word_boundaries = asyncio.run(
             synthesize_speech(
                 script_data["script"],
                 audio_path,
                 voice=voice,
                 rate=config.VIDEO_VOICE_RATE,
+                meta_out=tts_meta,
             )
         )
+        tts_provider = tts_meta.get("provider") or "unknown"
         log_event(
             job_id, "tts_done",
             word_count=len(word_boundaries),
+            tts=tts_provider,
+            edge_reason=tts_meta.get("edge_reason"),
             seconds=round(time.monotonic() - stage_started, 1),
         )
 
@@ -115,22 +167,32 @@ def _generate_video_sync(job_id: str, topic: str | None = None) -> dict:
             str(work_dir / "subs.ass"),
             words_per_cue=2,
             highlight=True,
-            add_emojis=True,
+            add_emojis=getattr(config, "ENABLE_SUBTITLE_EMOJIS", False) is True,
         )
+
+        hook_text = _extract_hook(script_data["script"])
+        # Kalite telemetrisi (hook / TTS / motor) — Telegram + pending.json.
+        quality: dict = {
+            "hook": hook_text,
+            "tts": tts_provider,
+            "engine": str(getattr(config, "VISUAL_ENGINE", "unknown")),
+        }
+        if tts_provider == "edge":
+            quality["warning"] = "tts_edge_fallback"
+            log_event(
+                job_id, "quality_warning",
+                reason="tts_edge_fallback",
+                edge_reason=tts_meta.get("edge_reason", "unknown"),
+            )
 
         video_filename = f"{job_id}.mp4"
         video_path = str(media_dir / video_filename)
 
-        # BGM müziğini al veya sentetik hafif ton üret
         bgm_dir = config.BGM_DIR or str(media_dir / "audio" / "bgm")
         bgm_path = get_or_create_bgm(bgm_dir)
 
         thumbnail_filename = f"{job_id}_thumb.png"
         thumbnail_path = str(media_dir / thumbnail_filename)
-
-        # Kurgu kalitesi istatistikleri (sahne sayısı / tekrar oranı / motor).
-        # Telegram önizlemesine girer: sorun gözle görülür, sessizce gizlenmez.
-        quality: dict = {}
 
         if getattr(config, "VIDEO_FORMAT", "standard") == "split_screen":
             from app.ai_visuals import generate_ai_image, image_to_motion_clip
@@ -278,13 +340,17 @@ def _generate_video_sync(job_id: str, topic: str | None = None) -> dict:
             # Kalite kapısı: aşırı tekrar = slayt gösterisi. Sessizce yayınlama,
             # gürültü çıkar (mevcut felsefe: sessiz bozulma yok).
             reuse = render_stats.get("clip_reuse_ratio", 0.0)
-            quality = {
-                "scene_count": int(render_stats.get("scene_count", 0)),
-                "clip_count": int(render_stats.get("clip_count", len(clip_paths))),
-                "clip_reuse_ratio": float(reuse),
-                # str(): pending.json'a yazılıyor; config değeri her zaman düz metin olmalı.
-                "engine": str(getattr(config, "VISUAL_ENGINE", "unknown")),
-            }
+            quality.update(
+                {
+                    "scene_count": int(render_stats.get("scene_count", 0)),
+                    "clip_count": int(render_stats.get("clip_count", len(clip_paths))),
+                    "clip_reuse_ratio": float(reuse),
+                    "hook": hook_text,
+                    "tts": tts_provider,
+                    "engine": str(getattr(config, "VISUAL_ENGINE", "unknown")),
+                }
+            )
+            # Reuse high overrides softer TTS note so Telegram shows the worse gate.
             if reuse > MAX_CLIP_REUSE_RATIO:
                 quality["warning"] = "clip_reuse_ratio_high"
                 log_event(
@@ -298,6 +364,8 @@ def _generate_video_sync(job_id: str, topic: str | None = None) -> dict:
                     f"(eşik {MAX_CLIP_REUSE_RATIO}x). Video slayt hissi verebilir.",
                     flush=True,
                 )
+            elif tts_provider == "edge":
+                quality["warning"] = "tts_edge_fallback"
 
             # YouTube'a özel kapak
             import subprocess
@@ -368,7 +436,16 @@ def _generate_video_sync(job_id: str, topic: str | None = None) -> dict:
             error="",
         )
         job_store.write_pending_mirror(media_dir, result)
-        log_event(job_id, "generate_complete", total_seconds=round(time.monotonic() - started_at, 1))
+        log_event(
+            job_id,
+            "generate_complete",
+            total_seconds=round(time.monotonic() - started_at, 1),
+            hook=quality.get("hook"),
+            clip_reuse_ratio=quality.get("clip_reuse_ratio"),
+            tts=quality.get("tts"),
+            engine=quality.get("engine"),
+            quality_warning=quality.get("warning"),
+        )
         return result
     except Exception as exc:
         log_event(

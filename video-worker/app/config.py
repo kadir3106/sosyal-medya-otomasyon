@@ -30,7 +30,10 @@ class Config:
     # kaçan-cron yakalama (app/catchup.py) bu saatleri referans alıyor.
     VIDEO_SCHEDULE_HOUR = int(os.environ.get("VIDEO_SCHEDULE_HOUR", "9"))
     IMAGE_SCHEDULE_HOUR = int(os.environ.get("IMAGE_SCHEDULE_HOUR", "12"))
-    TOPICS_PATH = os.environ.get("TOPICS_PATH", "/app/data/topics.json")
+    # Default EN pool = dark wealth (niche lock). Trivia topics.json is opt-in.
+    TOPICS_PATH = os.environ.get(
+        "TOPICS_PATH", "/app/data/topics_dark_wealth.json"
+    )
     TOPICS_PATH_TR = os.environ.get("TOPICS_PATH_TR", "/app/data/video_topics_tr.json")
     VIDEO_LANG = os.environ.get("VIDEO_LANG", "en")
     VIDEO_VOICE = os.environ.get("VIDEO_VOICE", "")
@@ -79,6 +82,10 @@ class Config:
     ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "")
     ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "")
     ENABLE_SFX = os.environ.get("ENABLE_SFX", "true").lower() == "true"
+    # Keyword emoji on ASS captions — off for cinematic / luxury (template smell).
+    ENABLE_SUBTITLE_EMOJIS = (
+        os.environ.get("ENABLE_SUBTITLE_EMOJIS", "false").lower() == "true"
+    )
     # YouTube analitiğinden kazanan hook/konuları LLM promptuna enjekte et.
     ENABLE_ANALYTICS_MEMORY = (
         os.environ.get("ENABLE_ANALYTICS_MEMORY", "false").lower() == "true"

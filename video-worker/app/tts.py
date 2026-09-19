@@ -88,15 +88,40 @@ def _synthesize_elevenlabs(
 
 
 async def synthesize_speech(
-    text: str, output_path: str, voice: str = DEFAULT_VOICE, rate: str | None = None
+    text: str,
+    output_path: str,
+    voice: str = DEFAULT_VOICE,
+    rate: str | None = None,
+    meta_out: dict | None = None,
 ) -> list[dict]:
+    """Synthesize speech; optionally fill meta_out with provider telemetry.
+
+    meta_out keys when provided:
+      - provider: "elevenlabs" | "edge"
+      - edge_reason: set when Edge is used (missing_key | elevenlabs_failed)
+    """
     # 1. ElevenLabs API anahtarı tanımlıysa öncelikle sinematik ses üretmeyi dene
     if config.ELEVENLABS_API_KEY:
         eleven_words = _synthesize_elevenlabs(
             text, output_path, config.ELEVENLABS_API_KEY, config.ELEVENLABS_VOICE_ID
         )
         if eleven_words:
+            if meta_out is not None:
+                meta_out["provider"] = "elevenlabs"
             return eleven_words
+        edge_reason = "elevenlabs_failed"
+        print(
+            "[tts] UYARI: ElevenLabs başarısız — Edge Neural fallback "
+            "(kalite yolu için ElevenLabs gerekir).",
+            flush=True,
+        )
+    else:
+        edge_reason = "missing_key"
+        print(
+            "[tts] UYARI: ELEVENLABS_API_KEY yok — Edge Neural kullanılıyor "
+            "(robotik / slop riski). Kalite barı için ElevenLabs ayarlayın.",
+            flush=True,
+        )
 
     # 2. edge-tts fallback (veya varsayılan ücretsiz motor)
     kwargs = {"boundary": "WordBoundary"}
@@ -124,5 +149,8 @@ async def synthesize_speech(
             "altyazısız video üretilmesine izin verilmiyor"
         )
 
+    if meta_out is not None:
+        meta_out["provider"] = "edge"
+        meta_out["edge_reason"] = edge_reason
     return word_boundaries
 
