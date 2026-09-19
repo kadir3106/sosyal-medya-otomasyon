@@ -1,8 +1,0 @@
-2026/09/18-23:50:24.891 6bbc Reusing MANIFEST C:\Projects\sosyal-medya-otomasyon\video-output\tiktok_session\Default\Local Storage\leveldb/MANIFEST-000001
-2026/09/18-23:50:24.892 6bbc Recovering log #6
-2026/09/18-23:50:24.892 6bbc Level-0 table #9: started
-2026/09/18-23:50:24.898 6bbc Level-0 table #9: 24401 bytes OK
-2026/09/18-23:50:24.898 6bbc Recovering log #9
-2026/09/18-23:50:24.900 6bbc Reusing old log C:\Projects\sosyal-medya-otomasyon\video-output\tiktok_session\Default\Local Storage\leveldb/000009.log 
-2026/09/18-23:50:24.902 6bbc Delete type=0 #6
-2026/09/18-23:50:24.902 6bbc Delete type=2 #10

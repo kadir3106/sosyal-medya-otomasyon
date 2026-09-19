@@ -27,8 +27,12 @@ def update_pipeline_status(status: str, progress: int, details: str, topic: str 
 
 def run_remotion_pipeline(topic: str, mock: bool = False) -> dict:
     """
-    EXPERIMENTAL: Remotion + Fal.ai + ElevenLabs video üretim hattı.
-    Daily product path is the FFmpeg pipeline in app/pipeline.py.
+    EXPERIMENTAL / NOT IN DAILY DOCKER PATH.
+
+    Remotion + Fal.ai + ElevenLabs host-only pipeline (`remotion-pipeline/`).
+    Not wired into docker-compose; worker image has no Node. Daily product path
+    is the FFmpeg pipeline in app/pipeline.py. Prefer that for cron/Telegram.
+
     Biten videoyu hazırlar, pending.json kaydeder ve video verisini döner.
     """
     repo_root = Path(config.MEDIA_DIR).resolve().parent

@@ -1,5 +1,9 @@
 # Hybrid AI Video Generation Pipeline (Fal.ai + ElevenLabs + Remotion)
 
+> **Experimental / not in the daily Docker path.**  
+> Production cron uses the Python + FFmpeg pipeline in `video-worker/` (`docker-compose.yml`).  
+> This folder is **host-only**: it is not a Compose service, the worker image has no Node, and default `MEDIA_DIR=/data/media` does not mount `remotion-pipeline`. Use `npm run orchestrate` (or `/render-remotion`) only for experiments. See also `video-worker/app/remotion_runner.py`.
+
 An automated programmatic video generation pipeline engineered for 9:16 vertical short-form platforms (YouTube Shorts, Instagram Reels, TikTok) in luxury, wealth psychology, and modern stoicism niches.
 
 ## Architecture & Integration Flow

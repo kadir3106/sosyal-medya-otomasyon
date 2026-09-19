@@ -381,3 +381,58 @@ def test_publish_routes_split_screen_to_tiktok_and_instagram(
     assert not video_path.exists()
     assert not split_path.exists()
 
+
+@patch("app.main.upload_to_facebook")
+@patch("app.main.upload_to_instagram")
+@patch("app.main.upload_to_tiktok")
+@patch("app.main.upload_to_youtube")
+@patch("app.main.upload_to_x")
+@patch("app.main.upload_to_linkedin")
+def test_publish_success_clears_publishing_job_so_generate_unblocks(
+    mock_li, mock_x, mock_yt, mock_tt, mock_ig, mock_fb, tmp_path
+):
+    """Regression: after success, job must leave publishing or /generate 409s forever."""
+    from app import jobs as job_store
+
+    video_path = tmp_path / "job_unblock.mp4"
+    video_path.write_bytes(b"FAKEVIDEO")
+    job_store.create_job(
+        tmp_path,
+        "job_unblock",
+        kind="video",
+        state="awaiting_approval",
+        payload={"video_filename": "job_unblock.mp4"},
+    )
+    job_store.write_pending_mirror(
+        tmp_path, {"job_id": "job_unblock", "video_filename": "job_unblock.mp4"}
+    )
+
+    mock_yt.return_value = {"platform": "youtube", "status": "success", "video_id": "y1"}
+    mock_tt.return_value = {"platform": "tiktok", "status": "success"}
+    mock_ig.return_value = {"platform": "instagram", "status": "success"}
+    mock_fb.return_value = {"platform": "facebook", "status": "success"}
+
+    with patch("app.main.config") as mock_config:
+        mock_config.MEDIA_DIR = str(tmp_path)
+        mock_config.THREADS_USER_ID = ""
+        mock_config.THREADS_ACCESS_TOKEN = ""
+        mock_config.X_REFRESH_TOKEN = ""
+        mock_config.X_CLIENT_ID = ""
+        mock_config.PINTEREST_REFRESH_TOKEN = ""
+        mock_config.PINTEREST_BOARD_ID = ""
+        response = client.post(
+            "/publish",
+            json={
+                "video_path": str(video_path),
+                "video_filename": "job_unblock.mp4",
+                "title": "t",
+                "description": "d",
+                "tags": [],
+            },
+        )
+
+    assert response.status_code == 200
+    assert job_store.get_job(tmp_path, "job_unblock")["state"] == "done"
+    assert job_store.has_blocking_job(tmp_path) is False
+    assert not (tmp_path / "pending.json").exists()
+

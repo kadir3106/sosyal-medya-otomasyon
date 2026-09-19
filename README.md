@@ -28,6 +28,10 @@ docker compose up -d
 ```
 n8n arayüzü: http://localhost:5678
 
+## Security note (credential rotation)
+
+`main` previously tracked a Playwright TikTok browser profile under `video-output/tiktok_session/` and a backup tarball. Those paths are now gitignored and untracked on this branch, but **anything that was ever public should be rotated**: TikTok session/cookies, TikTok PKCE/OAuth tokens, and any secrets that may have lived inside `backups/*.tar.gz`. History rewrite is optional; rotation is not.
+
 ## n8n Workflow Kurulumu (tek komut)
 
 Workflow'lar `n8n-workflows/` klasöründe versiyon kontrolü altında tutulur ve API üzerinden kurulur:

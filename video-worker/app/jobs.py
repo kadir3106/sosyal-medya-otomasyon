@@ -184,17 +184,24 @@ def mark_failed(media_dir: str | Path, job_id: str, error: str) -> None:
 
 
 def clear_awaiting(media_dir: str | Path, job_id: str | None = None) -> None:
-    """Move awaiting_approval job(s) to done (after publish/reject)."""
+    """Move awaiting_approval or publishing job(s) to done (after publish/reject).
+
+    Publish success path sets state=publishing before uploads; clearing must
+    include that state or has_blocking_job stays True forever (409 on /generate).
+    """
+    clearable = ("awaiting_approval", "publishing")
     with _connect(media_dir) as conn:
         if job_id:
             conn.execute(
-                "UPDATE jobs SET state='done', updated_at=? WHERE id=? AND state='awaiting_approval'",
+                "UPDATE jobs SET state='done', updated_at=? "
+                "WHERE id=? AND state IN ('awaiting_approval', 'publishing')",
                 (_utc_now(), job_id),
             )
         else:
+            placeholders = ",".join("?" for _ in clearable)
             conn.execute(
-                "UPDATE jobs SET state='done', updated_at=? WHERE state='awaiting_approval'",
-                (_utc_now(),),
+                f"UPDATE jobs SET state='done', updated_at=? WHERE state IN ({placeholders})",
+                (_utc_now(), *clearable),
             )
 
 

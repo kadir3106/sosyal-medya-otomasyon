@@ -137,3 +137,33 @@ def test_handle_callback_pitch_generates_and_sends_preview(tmp_path):
     kwargs = mock_send_video.call_args.kwargs
     assert "Yukarıdaki videoyu onaylıyor musun?" in kwargs["caption"]
     assert kwargs["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "approve"
+
+
+def test_handle_callback_approve_reads_job_store_without_mirror(tmp_path):
+    """Approve must work from SQLite awaiting_approval even if pending.json is gone."""
+    from app import jobs as job_store
+
+    payload = {
+        "kind": "video",
+        "title": "SQLite only",
+        "video_filename": "job-sqlite.mp4",
+    }
+    job_store.create_job(
+        tmp_path,
+        "job-sqlite",
+        kind="video",
+        state="awaiting_approval",
+        title="SQLite only",
+        payload=payload,
+    )
+
+    def publish_fn(body):
+        assert body["title"] == "SQLite only"
+        return {"results": [{"platform": "youtube", "status": "success"}]}
+
+    with patch("app.telegram_bot.send_message") as mock_send:
+        handle_callback(
+            "approve", str(tmp_path), "TOKEN", "123", publish_fn, lambda f: None
+        )
+
+    assert "✅ youtube" in mock_send.call_args.args[2]
