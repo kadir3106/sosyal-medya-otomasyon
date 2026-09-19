@@ -159,6 +159,42 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/health/tokens")
+def health_tokens():
+    """Report which publish platforms have credentials configured (no network I/O)."""
+    platforms = {
+        "youtube": _is_configured(config.YOUTUBE_CLIENT_ID)
+        and _is_configured(config.YOUTUBE_CLIENT_SECRET)
+        and _is_configured(config.YOUTUBE_REFRESH_TOKEN),
+        "tiktok": _is_configured(config.TIKTOK_CLIENT_KEY)
+        and _is_configured(config.TIKTOK_CLIENT_SECRET),
+        "instagram": _is_configured(config.META_IG_USER_ID)
+        and _is_configured(config.META_PAGE_ACCESS_TOKEN),
+        "facebook": _is_configured(config.META_PAGE_ID)
+        and _is_configured(config.META_PAGE_ACCESS_TOKEN),
+        "threads": _is_configured(config.THREADS_USER_ID)
+        and _is_configured(config.THREADS_ACCESS_TOKEN),
+        "x": _is_configured(config.X_CLIENT_ID)
+        and _is_configured(config.X_CLIENT_SECRET)
+        and _is_configured(config.X_REFRESH_TOKEN),
+        "linkedin": _is_configured(config.LINKEDIN_CLIENT_ID)
+        and _is_configured(config.LINKEDIN_CLIENT_SECRET)
+        and _is_configured(config.LINKEDIN_REFRESH_TOKEN)
+        and _is_configured(config.LINKEDIN_AUTHOR_URN),
+        "pinterest": _is_configured(config.PINTEREST_CLIENT_ID)
+        and _is_configured(config.PINTEREST_CLIENT_SECRET)
+        and _is_configured(config.PINTEREST_REFRESH_TOKEN)
+        and _is_configured(config.PINTEREST_BOARD_ID),
+    }
+    missing = [name for name, ok in platforms.items() if not ok]
+    return {
+        "status": "ok",
+        "platforms": platforms,
+        "missing": missing,
+        "note": "Presence of env vars only — no live token refresh or API calls.",
+    }
+
+
 @app.post("/discover-ideas")
 def discover_ideas():
     """Gündemdeki trendleri tarar, 3 viral kurgu konsepti üretir ve Telegram'a butonlu sunar."""
@@ -526,6 +562,9 @@ def _run_publish(payload: dict) -> dict:
         thumbnail_path = payload.get("thumbnail_path")
         if thumbnail_path:
             Path(thumbnail_path).unlink(missing_ok=True)
+        # mark_done + clear mirror: clear_awaiting alone must cover publishing
+        # (set above) so has_blocking_job does not 409 forever after success.
+        job_store.mark_done(media_dir, job_id)
         job_store.clear_pending_mirror(media_dir, job_id)
         success_count = sum(1 for r in results if r["status"] == "success")
         log_event(job_id, "publish_complete", success_count=success_count, total=len(results))

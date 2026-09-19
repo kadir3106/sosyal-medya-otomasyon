@@ -5,6 +5,7 @@ from typing import Callable
 
 import requests
 
+from app import jobs as job_store
 from app.errors import AllPlatformsFailedError
 
 API_URL = "https://api.telegram.org/bot{token}/{method}"
@@ -110,21 +111,19 @@ def handle_callback(
     generate_fn: Callable[[str], dict] | None = None,
 ) -> None:
     """Bir Telegram callback_query.data değerini işler ve sonucu chat'e bildirir."""
-    pending_path = Path(media_dir) / "pending.json"
-
     if data == "approve":
-        if not pending_path.is_file():
+        pending = job_store.read_pending_payload(media_dir)
+        if not pending:
             send_message(token, chat_id, "Bekleyen iş yok.")
             return
-        pending = json.loads(pending_path.read_text(encoding="utf-8"))
         _publish_and_report(pending, token, chat_id, publish_fn)
         return
 
     if data == "reject":
-        if not pending_path.is_file():
+        pending = job_store.read_pending_payload(media_dir)
+        if not pending:
             send_message(token, chat_id, "Bekleyen iş yok.")
             return
-        pending = json.loads(pending_path.read_text(encoding="utf-8"))
         filename = pending.get("video_filename") or pending.get("image_filename", "")
         cleanup_fn(filename)
         send_message(token, chat_id, "❌ İptal edildi, yeni içerik beklenecek.")
@@ -327,21 +326,20 @@ async def handle_natural_message(
     """Telegram'a yazılan doğal metinleri işler."""
     intent_data = parse_natural_intent(text)
     intent = intent_data.get("intent")
-    pending_path = Path(media_dir) / "pending.json"
 
     if intent == "approve":
-        if not pending_path.is_file():
+        pending = job_store.read_pending_payload(media_dir)
+        if not pending:
             send_message(token, chat_id, "ℹ️ Şu an onay bekleyen herhangi bir video bulunmuyor.")
             return
-        pending = json.loads(pending_path.read_text(encoding="utf-8"))
         _publish_and_report(pending, token, chat_id, publish_fn)
         return
 
     if intent == "reject":
-        if not pending_path.is_file():
+        pending = job_store.read_pending_payload(media_dir)
+        if not pending:
             send_message(token, chat_id, "ℹ️ İptal edilecek bir video bulunmuyor.")
             return
-        pending = json.loads(pending_path.read_text(encoding="utf-8"))
         filename = pending.get("video_filename") or pending.get("image_filename", "")
         cleanup_fn(filename)
         send_message(token, chat_id, "❌ Mevcut video iptal edildi ve silindi. Yeni bir konu başlatabilirsin.")
@@ -359,13 +357,10 @@ async def handle_natural_message(
             except Exception:
                 pass
 
-        if pending_path.is_file():
-            try:
-                p = json.loads(pending_path.read_text(encoding="utf-8"))
-                lines.append(f"\n⏳ *Onay Bekleyen Video:* {p.get('title')}")
-                lines.append("Yayınlamak için *'Yayınla'* veya *'İptal'* yazabilirsin.")
-            except Exception:
-                pass
+        pending = job_store.read_pending_payload(media_dir)
+        if pending:
+            lines.append(f"\n⏳ *Onay Bekleyen Video:* {pending.get('title')}")
+            lines.append("Yayınlamak için *'Yayınla'* veya *'İptal'* yazabilirsin.")
         else:
             lines.append("\n✅ Onay bekleyen iş yok, sistem yeni üretime hazır.")
 

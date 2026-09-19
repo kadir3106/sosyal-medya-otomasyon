@@ -10,25 +10,24 @@
 **/tiktok_session/
 **/tiktok_session/**
 
-# Local media / session junk
+# Local media / session junk (keep branding assets + audio SFX tracked)
 backups/*
 !backups/.gitkeep
 *.tar.gz
-video-output/*_thumb.png
-video-output/tiktok_*.png
+video-output/*
+!video-output/.gitkeep
+!video-output/branding/
+!video-output/branding/**
+!video-output/audio/
+!video-output/audio/**
+
+# Extra session / runtime guards
+video-output/tiktok_session/
+video-output/tiktok_session/**
 video-output/work/
 video-output/failed/
-video-output/*.log
-video-output/pending.json
-video-output/pending_pitches.json
-video-output/telegram_offset.json
-video-output/used_*.json
-video-output/published_log.json
 video-output/jobs.db
 video-output/jobs.db-*
-video-output/pipeline_status.json
-video-output/digest_sent.txt
-video-output/last_*_run.txt
 
 # Build / runtime
 *.mp4
