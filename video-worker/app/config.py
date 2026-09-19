@@ -79,6 +79,15 @@ class Config:
     ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "")
     ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "")
     ENABLE_SFX = os.environ.get("ENABLE_SFX", "true").lower() == "true"
+    # YouTube analitiğinden kazanan hook/konuları LLM promptuna enjekte et.
+    ENABLE_ANALYTICS_MEMORY = (
+        os.environ.get("ENABLE_ANALYTICS_MEMORY", "false").lower() == "true"
+    )
+    # LLM waterfall: primary (OPENROUTER_MODEL) → secondary → free fallback
+    OPENROUTER_MODEL_SECONDARY = os.environ.get("OPENROUTER_MODEL_SECONDARY", "")
+    OPENROUTER_MODEL_FALLBACK = os.environ.get(
+        "OPENROUTER_MODEL_FALLBACK", "google/gemma-4-31b-it:free"
+    )
     # Video formatı: 'cinematic' (lüks/belgesel tek ekran), 'split_screen' veya 'standard'
     VIDEO_FORMAT = os.environ.get("VIDEO_FORMAT", "cinematic")
     CINEMATIC_GRADE = os.environ.get("CINEMATIC_GRADE", "true").lower() == "true"

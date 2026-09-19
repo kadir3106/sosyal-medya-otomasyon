@@ -307,3 +307,77 @@ def test_publish_video_includes_threads_x_pinterest_when_configured(
     assert mock_x_vid.called
     assert mock_pin.called
 
+
+@patch("app.main.upload_to_facebook")
+@patch("app.main.upload_to_instagram")
+@patch("app.main.upload_to_tiktok")
+@patch("app.main.upload_to_youtube")
+def test_publish_passes_pinned_comment_to_youtube(
+    mock_yt, mock_tt, mock_ig, mock_fb, tmp_path
+):
+    video_path = tmp_path / "job_pin.mp4"
+    video_path.write_bytes(b"FAKEVIDEO")
+
+    mock_yt.return_value = {"platform": "youtube", "status": "success", "video_id": "y1"}
+    mock_tt.return_value = {"platform": "tiktok", "status": "error", "error": "x"}
+    mock_ig.return_value = {"platform": "instagram", "status": "error", "error": "x"}
+    mock_fb.return_value = {"platform": "facebook", "status": "error", "error": "x"}
+
+    with patch("app.main.config") as mock_config:
+        mock_config.MEDIA_DIR = str(tmp_path)
+        response = client.post(
+            "/publish",
+            json={
+                "video_path": str(video_path),
+                "video_filename": "job_pin.mp4",
+                "title": "t",
+                "description": "d",
+                "tags": [],
+                "pinned_comment": "Would you pay $20k for status?",
+            },
+        )
+
+    assert response.status_code == 200
+    assert mock_yt.call_args.kwargs["pinned_comment"] == "Would you pay $20k for status?"
+
+
+@patch("app.main.upload_to_facebook")
+@patch("app.main.upload_to_instagram")
+@patch("app.main.upload_to_tiktok")
+@patch("app.main.upload_to_youtube")
+def test_publish_routes_split_screen_to_tiktok_and_instagram(
+    mock_yt, mock_tt, mock_ig, mock_fb, tmp_path
+):
+    video_path = tmp_path / "job_ss.mp4"
+    split_path = tmp_path / "job_ss_splitscreen.mp4"
+    video_path.write_bytes(b"CINEMA")
+    split_path.write_bytes(b"SPLIT")
+
+    mock_yt.return_value = {"platform": "youtube", "status": "success", "video_id": "y1"}
+    mock_tt.return_value = {"platform": "tiktok", "status": "success"}
+    mock_ig.return_value = {"platform": "instagram", "status": "success"}
+    mock_fb.return_value = {"platform": "facebook", "status": "success"}
+
+    with patch("app.main.config") as mock_config:
+        mock_config.MEDIA_DIR = str(tmp_path)
+        response = client.post(
+            "/publish",
+            json={
+                "video_path": str(video_path),
+                "video_filename": "job_ss.mp4",
+                "split_screen_path": str(split_path),
+                "split_screen_filename": "job_ss_splitscreen.mp4",
+                "title": "t",
+                "description": "d",
+                "tags": [],
+            },
+        )
+
+    assert response.status_code == 200
+    assert mock_yt.call_args.args[0] == str(video_path)
+    assert mock_tt.call_args.args[0] == str(split_path)
+    assert mock_ig.call_args.args[0] == "job_ss_splitscreen.mp4"
+    assert mock_fb.call_args.args[0] == str(video_path)
+    assert not video_path.exists()
+    assert not split_path.exists()
+

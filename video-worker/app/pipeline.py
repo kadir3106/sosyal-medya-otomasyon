@@ -1,3 +1,4 @@
+import asyncio
 import json
 import shutil
 import time
@@ -6,6 +7,7 @@ from pathlib import Path
 from app.audio_bgm import get_or_create_bgm
 from app.config import config
 from app.image_gen import render_card
+from app import jobs as job_store
 from app.joblog import log_event
 from app.render import (
     get_audio_duration,
@@ -34,6 +36,12 @@ MAX_CLIP_REUSE_RATIO = 1.35
 
 
 async def generate_video(job_id: str, topic: str | None = None) -> dict:
+    """Async entrypoint — offloads the blocking pipeline so the event loop
+    (Telegram poller, health, digest) stays responsive during Kling/FFmpeg."""
+    return await asyncio.to_thread(_generate_video_sync, job_id, topic)
+
+
+def _generate_video_sync(job_id: str, topic: str | None = None) -> dict:
     media_dir = Path(config.MEDIA_DIR)
     work_dir = media_dir / "work" / job_id
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -46,13 +54,17 @@ async def generate_video(job_id: str, topic: str | None = None) -> dict:
     started_at = time.monotonic()
     from_pool = topic is None
     try:
+        job_store.create_job(
+            media_dir, job_id, kind="video", state="generating", topic=topic
+        )
         if from_pool:
             topic = select_next_topic(topics_path, state_path)
+            job_store.update_job(media_dir, job_id, topic=topic)
         log_event(job_id, "topic_selected", topic=topic, lang=lang)
 
         stage_started = time.monotonic()
         winning_context = None
-        if getattr(config, "ENABLE_ANALYTICS_MEMORY", None) is True:
+        if config.ENABLE_ANALYTICS_MEMORY:
             try:
                 from app.channel_growth import get_winning_context_for_prompt
                 winning_context = get_winning_context_for_prompt()
@@ -81,8 +93,15 @@ async def generate_video(job_id: str, topic: str | None = None) -> dict:
 
         audio_path = str(work_dir / "speech.mp3")
         stage_started = time.monotonic()
-        word_boundaries = await synthesize_speech(
-            script_data["script"], audio_path, voice=voice, rate=config.VIDEO_VOICE_RATE
+        # synthesize_speech is async; we're already in a worker thread so
+        # asyncio.run is safe (no running loop in this thread).
+        word_boundaries = asyncio.run(
+            synthesize_speech(
+                script_data["script"],
+                audio_path,
+                voice=voice,
+                rate=config.VIDEO_VOICE_RATE,
+            )
         )
         log_event(
             job_id, "tts_done",
@@ -300,6 +319,7 @@ async def generate_video(job_id: str, topic: str | None = None) -> dict:
                 )
 
         # Dual-Format: TikTok & Instagram Reels için hipnotik Split-Screen varyantı üret
+        split_screen_filename = video_filename
         if getattr(config, "VIDEO_FORMAT", "standard") != "split_screen":
             split_screen_filename = f"{job_id}_splitscreen.mp4"
             split_screen_path = str(media_dir / split_screen_filename)
@@ -318,7 +338,9 @@ async def generate_video(job_id: str, topic: str | None = None) -> dict:
                     bgm_volume=0.18,
                 )
             except Exception as ss_err:
+                print(f"[pipeline] Split-screen üretilemedi ({ss_err}); cinematic kullanılacak.", flush=True)
                 split_screen_path = video_path
+                split_screen_filename = video_filename
         else:
             split_screen_path = video_path
 
@@ -327,6 +349,7 @@ async def generate_video(job_id: str, topic: str | None = None) -> dict:
             "video_path": video_path,
             "video_filename": video_filename,
             "split_screen_path": split_screen_path,
+            "split_screen_filename": split_screen_filename,
             "thumbnail_path": thumbnail_path,
             "topic": topic,
             "title": script_data["title"],
@@ -335,9 +358,16 @@ async def generate_video(job_id: str, topic: str | None = None) -> dict:
             "pinned_comment": script_data.get("pinned_comment", ""),
             "quality": quality,
         }
-        (media_dir / "pending.json").write_text(
-            json.dumps(result), encoding="utf-8"
+        job_store.update_job(
+            media_dir,
+            job_id,
+            state="awaiting_approval",
+            title=script_data["title"],
+            topic=topic,
+            payload=result,
+            error="",
         )
+        job_store.write_pending_mirror(media_dir, result)
         log_event(job_id, "generate_complete", total_seconds=round(time.monotonic() - started_at, 1))
         return result
     except Exception as exc:
@@ -346,6 +376,10 @@ async def generate_video(job_id: str, topic: str | None = None) -> dict:
             error=str(exc),
             total_seconds=round(time.monotonic() - started_at, 1),
         )
+        try:
+            job_store.mark_failed(media_dir, job_id, str(exc))
+        except Exception:
+            pass
         # Başarısız üretim konuyu yakmasın — havuza geri bırak,
         # ertesi gün (veya bir sonraki denemede) tekrar seçilebilsin.
         if from_pool and topic:

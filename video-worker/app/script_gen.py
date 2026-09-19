@@ -10,11 +10,13 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_MODEL = "google/gemma-4-31b-it:free"
+REQUIRED_KEYS = ("script", "title", "description", "tags")
 
 # LLM endpoint + model .env üzerinden değiştirilebilir:
 #   LLM_API_URL      -> kendi LiteLLM/openai-compatible gateway'ine yönlendirmek için
 #                       (örn. http://host.docker.internal:4000/v1)
-#   OPENROUTER_MODEL -> model adı (boşsa DEFAULT_MODEL kullanılır)
+#   OPENROUTER_MODEL -> primary model (boşsa DEFAULT_MODEL)
+#   OPENROUTER_MODEL_SECONDARY / OPENROUTER_MODEL_FALLBACK -> waterfall
 def _resolve_url(raw: str | None) -> str:
     url = raw or DEFAULT_API_URL
     if os.path.exists("/.dockerenv") and ("127.0.0.1" in url or "localhost" in url):
@@ -26,6 +28,20 @@ def _resolve_url(raw: str | None) -> str:
 
 OPENROUTER_URL = _resolve_url(config.LLM_API_URL)
 MODEL = config.OPENROUTER_MODEL or DEFAULT_MODEL
+
+
+def _model_waterfall() -> list[str]:
+    """Primary → secondary → free fallback; de-dupe while preserving order."""
+    models: list[str] = []
+    for candidate in (
+        config.OPENROUTER_MODEL or DEFAULT_MODEL,
+        getattr(config, "OPENROUTER_MODEL_SECONDARY", "") or "",
+        getattr(config, "OPENROUTER_MODEL_FALLBACK", "") or DEFAULT_MODEL,
+    ):
+        name = (candidate or "").strip()
+        if name and name not in models:
+            models.append(name)
+    return models or [DEFAULT_MODEL]
 
 PROMPT_TEMPLATE = """# Role & Persona
 You are the elite, world-class Senior Content Director, Master Copywriter, and Crowd Psychology Expert behind accounts reaching billions of views in the PeakMotivation, Alex Hormozi style: luxury, power dynamics, wealth psychology, and modern stoicism.
@@ -110,8 +126,25 @@ def generate_script(
 
     messages = [{"role": "user", "content": prompt_text}]
 
-    content = _call_llm(messages, api_key)
-    data = _parse(content)
+    content, used_model = _call_llm_with_fallback(messages, api_key)
+    try:
+        data = _parse(content)
+    except ValueError:
+        # JSON salvage failed — one stricter retry on the same waterfall.
+        strict_messages = messages + [
+            {
+                "role": "user",
+                "content": (
+                    "Your previous reply was not valid JSON. "
+                    "Return ONLY a single valid JSON object with keys "
+                    "script, title, description, pinned_comment, tags, "
+                    "visual_prompts, visual_keywords. No markdown."
+                ),
+            }
+        ]
+        content, used_model = _call_llm_with_fallback(strict_messages, api_key)
+        data = _parse(content)
+    logger.info("script_gen model used: %s", used_model)
 
     # Emniyet kemeri: model sınırı aştıysa bir kez kısaltma iste.
     if len(data.get("script", "").split()) > 65:
@@ -127,7 +160,7 @@ def generate_script(
             }
         )
         try:
-            content2 = _call_llm(messages, api_key)
+            content2, _ = _call_llm_with_fallback(messages, api_key)
             try:
                 data2 = _parse(content2)
                 data = data2
@@ -139,21 +172,48 @@ def generate_script(
         except Exception as exc:
             logger.warning("Senaryo kısaltma adımında hata (orijinal korunuyor): %s", exc)
 
+    _validate_script_shape(data)
     return data
 
 
-def _call_llm(messages: list[dict], api_key: str) -> str:
+def _call_llm_with_fallback(messages: list[dict], api_key: str) -> tuple[str, str]:
+    """Try each model in the waterfall; raise the last error if all fail."""
+    last_exc: Exception | None = None
+    for model in _model_waterfall():
+        try:
+            return _call_llm(messages, api_key, model=model), model
+        except Exception as exc:
+            last_exc = exc
+            logger.warning("LLM model %s failed: %s", model, exc)
+    assert last_exc is not None
+    raise last_exc
+
+
+def _call_llm(messages: list[dict], api_key: str, model: str | None = None) -> str:
     response = session.post(
         OPENROUTER_URL,
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         },
-        json={"model": MODEL, "messages": messages},
+        json={"model": model or MODEL, "messages": messages},
         timeout=60,
     )
     response.raise_for_status()
     return response.json()["choices"][0]["message"]["content"]
+
+
+def _validate_script_shape(data: dict) -> None:
+    """Light structural checks without breaking JSON salvage paths."""
+    for key in REQUIRED_KEYS:
+        if key not in data:
+            raise ValueError(f"Model response missing required key '{key}': {data!r}")
+    if not isinstance(data.get("script"), str) or not data["script"].strip():
+        raise ValueError(f"Model response has empty script: {data!r}")
+    if not isinstance(data.get("title"), str) or not data["title"].strip():
+        raise ValueError(f"Model response has empty title: {data!r}")
+    if not isinstance(data.get("tags"), list):
+        raise ValueError(f"Model response tags must be a list: {data!r}")
 
 
 def _parse(content: str) -> dict:
@@ -202,7 +262,7 @@ def _parse(content: str) -> dict:
     # alanı atlayabilir; pipeline.py o durumda script'ten anahtar kelime
     # çıkarmaya (extract_keywords) düşüyor — bir günün tamamını bu yüzden
     # kaybetmeye değmez.
-    for key in ("script", "title", "description", "tags"):
+    for key in REQUIRED_KEYS:
         if key not in data:
             raise ValueError(f"Model response missing required key '{key}': {data!r}")
 

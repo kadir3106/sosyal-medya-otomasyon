@@ -11,45 +11,29 @@ POLL_TIMEOUT_SECONDS = 120
 
 
 def _resolve_public_video_url(video_filename: str, tunnel_log_path: str = "") -> str:
-    """Instagram'ın videoyu indirebilmesi için herkese açık URL üretir."""
-    # 1. Tünel logu varsa ve dosya bulunursa dene
+    """Instagram'ın videoyu indirebilmesi için herkese açık URL üretir.
+
+    Prefer the Cloudflare tunnel. Do NOT upload content to third-party hosts
+    (catbox.moe) — fail clearly so Telegram can surface a fixable error.
+    """
     if tunnel_log_path and os.path.exists(tunnel_log_path):
         try:
             tunnel_url = get_tunnel_url(tunnel_log_path)
             return f"{tunnel_url}/media/{video_filename}"
-        except Exception:
-            pass
+        except Exception as exc:
+            raise RuntimeError(
+                f"Instagram public URL unavailable (tunnel failed): {exc}"
+            ) from exc
 
-    # 2. Yerel dosya yolunu bul
-    from pathlib import Path
-    candidate_paths = [
-        Path(video_filename),
-        Path("video-output") / video_filename,
-    ]
-    local_file = None
-    for cp in candidate_paths:
-        if cp.exists() and cp.is_file():
-            local_file = cp
-            break
-
-    if not local_file:
-        found = list(Path("video-output").rglob(Path(video_filename).name))
-        if found:
-            local_file = found[0]
-
-    if local_file and local_file.exists():
-        with open(local_file, "rb") as vf:
-            res = session.post(
-                "https://catbox.moe/user/api.php",
-                data={"reqtype": "fileupload"},
-                files={"fileToUpload": vf},
-                timeout=180,
-            )
-            if res.status_code == 200 and res.text.strip().startswith("http"):
-                return res.text.strip()
-
-    tunnel_url = get_tunnel_url(tunnel_log_path)
-    return f"{tunnel_url}/media/{video_filename}"
+    try:
+        tunnel_url = get_tunnel_url(tunnel_log_path)
+        return f"{tunnel_url}/media/{video_filename}"
+    except Exception as exc:
+        raise RuntimeError(
+            "Instagram requires a working media tunnel URL; "
+            "refusing third-party catbox upload. "
+            f"Tunnel error: {exc}"
+        ) from exc
 
 
 def upload_to_instagram(
