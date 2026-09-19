@@ -27,7 +27,8 @@ def update_pipeline_status(status: str, progress: int, details: str, topic: str 
 
 def run_remotion_pipeline(topic: str, mock: bool = False) -> dict:
     """
-    Remotion + Fal.ai + ElevenLabs video üretim hattını çalıştırır.
+    EXPERIMENTAL: Remotion + Fal.ai + ElevenLabs video üretim hattı.
+    Daily product path is the FFmpeg pipeline in app/pipeline.py.
     Biten videoyu hazırlar, pending.json kaydeder ve video verisini döner.
     """
     repo_root = Path(config.MEDIA_DIR).resolve().parent

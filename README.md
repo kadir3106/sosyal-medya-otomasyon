@@ -3,12 +3,23 @@
 Kurulum ve mimari için bkz. `docs/superpowers/specs/2026-09-03-sosyal-medya-video-otomasyon-design.md`.
 Uygulama planı: `docs/superpowers/plans/2026-09-03-sosyal-medya-video-otomasyon.md`.
 
+## Render stack
+
+- **Daily path (production):** Python + **FFmpeg** in `video-worker/` (`app/pipeline.py` → `render.py` / `split_screen.py`), scheduled by n8n → Telegram approval → `/publish`.
+- **Remotion (`remotion-pipeline/`):** **experimental / host-only.** Not in `docker-compose.yml`. Use `/render-remotion` only for experiments; do not rely on it for the daily cron.
+
 ## Geliştirme
 
 Testleri çalıştırmak için:
 ```bash
 docker compose build video-worker
 docker compose run --rm video-worker pytest tests/ -v
+```
+
+Or locally (from `video-worker/`):
+```bash
+pip install -r requirements.txt
+pytest tests/ -v
 ```
 
 Tüm sistemi ayağa kaldırmak için `.env` dosyasını `.env.example`'dan kopyalayıp doldurun, sonra:
@@ -50,11 +61,10 @@ Script şunları yapar:
 
 | Anahtar | Gerekli | Durum |
 |---|---|---|
-| OPENROUTER_API_KEY | ✅ zorunlu (script üretimi) | ✅ `.env` içinde dolu |
-| TELEGRAM_BOT_TOKEN / CHAT_ID | ✅ onay akışı | ✅ `.env` içinde dolu |
-| PEXELS_API_KEY | ✅ stok klip | ✅ `.env` içinde dolu |
-| YOUTUBE_API_KEY | 📊 arama/istatistik (Data API v3) | ✅ `.env` içinde dolu (upload yapmaz!) |
-| YOUTUBE_CLIENT_ID/SECRET/REFRESH_TOKEN | YouTube Shorts upload | ⏳ Plan Task 21 — OAuth, API key'den ayrı |
-| TIKTOK_CLIENT_KEY/SECRET | TikTok upload | ⏳ Plan Task 22 — audit süresi uzun, en erken başla |
-| META_IG_USER_ID / META_PAGE_ID / META_PAGE_ACCESS_TOKEN | IG/FB Reels upload | ⏳ Plan Task 23 |
-
+| OPENROUTER_API_KEY | ✅ zorunlu (script üretimi) | `.env` içine yaz |
+| TELEGRAM_BOT_TOKEN / CHAT_ID | ✅ onay akışı | `.env` içine yaz |
+| PEXELS_API_KEY | ✅ stok klip | `.env` içine yaz |
+| YOUTUBE_API_KEY | 📊 arama/istatistik (Data API v3) | upload yapmaz |
+| YOUTUBE_CLIENT_ID/SECRET/REFRESH_TOKEN | YouTube Shorts upload | OAuth |
+| TIKTOK_CLIENT_KEY/SECRET | TikTok upload | audit sonrası |
+| META_IG_USER_ID / META_PAGE_ID / META_PAGE_ACCESS_TOKEN | IG/FB Reels upload | |

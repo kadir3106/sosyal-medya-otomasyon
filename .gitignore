@@ -1,5 +1,36 @@
-﻿.env
+﻿# Secrets & local env
+.env
 .env.*
+!.env.example
+*.pem
+*.key
+*credentials*.json
+*token*.json
+.tiktok_pkce.json
+**/tiktok_session/
+**/tiktok_session/**
+
+# Local media / session junk
+backups/*
+!backups/.gitkeep
+*.tar.gz
+video-output/*_thumb.png
+video-output/tiktok_*.png
+video-output/work/
+video-output/failed/
+video-output/*.log
+video-output/pending.json
+video-output/pending_pitches.json
+video-output/telegram_offset.json
+video-output/used_*.json
+video-output/published_log.json
+video-output/jobs.db
+video-output/jobs.db-*
+video-output/pipeline_status.json
+video-output/digest_sent.txt
+video-output/last_*_run.txt
+
+# Build / runtime
 *.mp4
 *.mp3
 node_modules/
@@ -8,3 +39,6 @@ __pycache__/
 dist/
 output/
 .cache/
+.pytest_cache/
+*.pyc
+.DS_Store

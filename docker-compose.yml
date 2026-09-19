@@ -81,6 +81,9 @@ services:
       - VIDEO_FORMAT=${VIDEO_FORMAT:-cinematic}
       - CINEMATIC_GRADE=${CINEMATIC_GRADE:-true}
       - ENABLE_SFX=${ENABLE_SFX:-true}
+      - ENABLE_ANALYTICS_MEMORY=${ENABLE_ANALYTICS_MEMORY:-false}
+      - OPENROUTER_MODEL_SECONDARY=${OPENROUTER_MODEL_SECONDARY}
+      - OPENROUTER_MODEL_FALLBACK=${OPENROUTER_MODEL_FALLBACK:-google/gemma-4-31b-it:free}
       # Telegram günlük özet mesajı (app/daily_digest.py) — TZ=Europe/Istanbul ile saat gelince gönderilir.
       - DIGEST_HOUR=${DIGEST_HOUR:-21}
       - DIGEST_INTERVAL_SECONDS=${DIGEST_INTERVAL_SECONDS:-300}

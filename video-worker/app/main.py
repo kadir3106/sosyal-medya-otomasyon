@@ -10,6 +10,7 @@ import asyncio
 import contextlib
 import json
 import shutil
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,9 +25,10 @@ from app.config import config
 from app.daily_digest import run_digest_loop
 from app.errors import AllPlatformsFailedError
 from app.image_gen import generate_image_content, render_card
+from app import jobs as job_store
 from app.joblog import log_event
 from app.pitch_gen import generate_pitches
-from app.pipeline import generate_video
+from app.pipeline import generate_video, _generate_video_sync
 from app.publish_log import append_publish_log
 from app.publishers.linkedin import upload_to_linkedin
 from app.publishers.meta import upload_to_facebook, upload_to_instagram
@@ -39,6 +41,10 @@ from app.telegram_bot import run_poller, send_pitches_message
 from app.topics import release_topic, select_next_topic
 from app.trends import fetch_trends
 
+# Per-platform upload timeout (seconds) for parallel fan-out.
+_PUBLISH_TIMEOUT_SECONDS = 300
+_PUBLISH_WORKERS = 4
+
 
 def _is_configured(val) -> bool:
     return isinstance(val, str) and bool(val.strip())
@@ -47,7 +53,7 @@ def _is_configured(val) -> bool:
 def _run_generate_sync(topic: str | None = None):
     job_id = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     mark_run_today(str(Path(config.MEDIA_DIR) / "last_video_run.txt"))
-    return generate_video(job_id, topic=topic)
+    return _generate_video_sync(job_id, topic=topic)
 
 
 async def _run_catch_up() -> None:
@@ -135,10 +141,13 @@ class GenerateRequest(BaseModel):
 class PublishRequest(BaseModel):
     video_path: str = ""
     video_filename: str = ""
+    split_screen_path: str = ""
+    split_screen_filename: str = ""
     thumbnail_path: str = ""
     title: str = ""
     description: str = ""
     tags: list[str] = []
+    pinned_comment: str = ""
     kind: str = "video"
     image_path: str = ""
     image_filename: str = ""
@@ -173,8 +182,9 @@ def discover_ideas():
 
 @app.post("/generate")
 async def generate(req: GenerateRequest | None = None):
-    pending_path = Path(config.MEDIA_DIR) / "pending.json"
-    if pending_path.is_file():
+    media_dir = Path(config.MEDIA_DIR)
+    pending_path = media_dir / "pending.json"
+    if pending_path.is_file() or job_store.has_blocking_job(media_dir):
         raise HTTPException(
             status_code=409,
             detail=(
@@ -183,7 +193,7 @@ async def generate(req: GenerateRequest | None = None):
             ),
         )
 
-    mark_run_today(str(Path(config.MEDIA_DIR) / "last_video_run.txt"))
+    mark_run_today(str(media_dir / "last_video_run.txt"))
     job_id = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     topic = req.topic if req else None
     try:
@@ -199,7 +209,7 @@ class RemotionRequest(BaseModel):
 
 @app.post("/render-remotion")
 async def render_remotion_endpoint(req: RemotionRequest | None = None):
-    """Remotion + Fal.ai + ElevenLabs hibrit video hattını tetikler."""
+    """Experimental Remotion path — daily product uses the FFmpeg pipeline."""
     from app.remotion_runner import run_remotion_pipeline
 
     topic = req.topic if req and req.topic else "The Silent Architecture of Power"
@@ -212,8 +222,9 @@ async def render_remotion_endpoint(req: RemotionRequest | None = None):
 
 @app.post("/generate-image")
 async def generate_image():
-    pending_path = Path(config.MEDIA_DIR) / "pending.json"
-    if pending_path.is_file():
+    media_dir = Path(config.MEDIA_DIR)
+    pending_path = media_dir / "pending.json"
+    if pending_path.is_file() or job_store.has_blocking_job(media_dir):
         raise HTTPException(
             status_code=409,
             detail=(
@@ -222,13 +233,15 @@ async def generate_image():
             ),
         )
 
-    mark_run_today(str(Path(config.MEDIA_DIR) / "last_image_run.txt"))
+    mark_run_today(str(media_dir / "last_image_run.txt"))
     job_id = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    media_dir = Path(config.MEDIA_DIR)
     state_path = str(media_dir / "used_image_topics.json")
     topic = None
     try:
         topic = select_next_topic(config.IMAGE_TOPICS_PATH, state_path)
+        job_store.create_job(
+            media_dir, job_id, kind="image", state="generating", topic=topic
+        )
         content = generate_image_content(topic, api_key=config.OPENROUTER_API_KEY)
 
         image_filename = f"{job_id}.png"
@@ -250,20 +263,33 @@ async def generate_image():
             "caption": content["caption"],
             "hashtags": content["hashtags"],
         }
-        pending_path.write_text(json.dumps(result), encoding="utf-8")
+        job_store.update_job(
+            media_dir,
+            job_id,
+            state="awaiting_approval",
+            title=content.get("caption", ""),
+            topic=topic,
+            payload=result,
+            error="",
+        )
+        job_store.write_pending_mirror(media_dir, result)
         return result
     except Exception as exc:
         if topic:
             release_topic(topic, state_path)
+        try:
+            job_store.mark_failed(media_dir, job_id, str(exc))
+        except Exception:
+            pass
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.get("/pending")
 def get_pending():
-    pending_path = Path(config.MEDIA_DIR) / "pending.json"
-    if not pending_path.is_file():
+    payload = job_store.read_pending_payload(config.MEDIA_DIR)
+    if payload is None:
         raise HTTPException(status_code=404, detail="no pending job")
-    return json.loads(pending_path.read_text(encoding="utf-8"))
+    return payload
 
 
 @app.get("/media/{filename}")
@@ -274,14 +300,16 @@ def get_media(filename: str):
     if not (filename.endswith(".mp4") or filename.endswith(".png")):
         raise HTTPException(status_code=404, detail="not found")
 
-    pending_path = Path(config.MEDIA_DIR) / "pending.json"
-    if not pending_path.is_file():
+    pending = job_store.read_pending_payload(config.MEDIA_DIR)
+    if pending is None:
         raise HTTPException(status_code=404, detail="not found")
 
-    pending = json.loads(pending_path.read_text(encoding="utf-8"))
-    if filename != pending.get("video_filename") and filename != pending.get(
-        "image_filename"
-    ):
+    allowed = {
+        pending.get("video_filename"),
+        pending.get("image_filename"),
+        pending.get("split_screen_filename"),
+    }
+    if filename not in allowed:
         raise HTTPException(status_code=404, detail="not found")
 
     file_path = Path(config.MEDIA_DIR) / filename
@@ -292,98 +320,188 @@ def get_media(filename: str):
     return FileResponse(str(file_path), media_type=media_type)
 
 
+def _run_upload_task(name: str, fn, *args, **kwargs) -> dict:
+    """Run one publisher; normalize timeouts/exceptions into error results."""
+    try:
+        return fn(*args, **kwargs)
+    except Exception as exc:
+        return {"platform": name, "status": "error", "error": str(exc)}
+
+
+def _run_parallel_uploads(tasks: list[tuple[str, object, tuple, dict]]) -> list[dict]:
+    """Fan-out platform uploads with per-task timeouts. tasks: (platform, fn, args, kwargs)."""
+    if not tasks:
+        return []
+    by_name: dict[str, dict] = {}
+    with ThreadPoolExecutor(max_workers=min(_PUBLISH_WORKERS, len(tasks))) as pool:
+        futures = {
+            pool.submit(_run_upload_task, name, fn, *args, **kwargs): name
+            for name, fn, args, kwargs in tasks
+        }
+        for fut, name in futures.items():
+            try:
+                by_name[name] = fut.result(timeout=_PUBLISH_TIMEOUT_SECONDS)
+            except Exception as exc:
+                by_name[name] = {"platform": name, "status": "error", "error": str(exc)}
+    return [
+        by_name.get(name, {"platform": name, "status": "error", "error": "missing"})
+        for name, _, _, _ in tasks
+    ]
+
+
 def _run_publish(payload: dict) -> dict:
     kind = payload.get("kind", "video")
     job_id = Path(payload.get("video_filename") or payload.get("image_filename") or "unknown").stem
+    media_dir = Path(config.MEDIA_DIR)
 
     if kind == "image":
-        results = [
-            upload_to_x(
-                payload.get("image_path", ""),
-                payload.get("caption", ""),
-                client_id=config.X_CLIENT_ID,
-                client_secret=config.X_CLIENT_SECRET,
-                refresh_token=config.X_REFRESH_TOKEN,
+        job_store.update_job(media_dir, job_id, state="publishing")
+        tasks = [
+            (
+                "x",
+                upload_to_x,
+                (
+                    payload.get("image_path", ""),
+                    payload.get("caption", ""),
+                ),
+                {
+                    "client_id": config.X_CLIENT_ID,
+                    "client_secret": config.X_CLIENT_SECRET,
+                    "refresh_token": config.X_REFRESH_TOKEN,
+                },
             ),
-            upload_to_linkedin(
-                payload.get("image_path", ""),
-                payload.get("caption", ""),
-                client_id=config.LINKEDIN_CLIENT_ID,
-                client_secret=config.LINKEDIN_CLIENT_SECRET,
-                refresh_token=config.LINKEDIN_REFRESH_TOKEN,
-                author_urn=config.LINKEDIN_AUTHOR_URN,
+            (
+                "linkedin",
+                upload_to_linkedin,
+                (
+                    payload.get("image_path", ""),
+                    payload.get("caption", ""),
+                ),
+                {
+                    "client_id": config.LINKEDIN_CLIENT_ID,
+                    "client_secret": config.LINKEDIN_CLIENT_SECRET,
+                    "refresh_token": config.LINKEDIN_REFRESH_TOKEN,
+                    "author_urn": config.LINKEDIN_AUTHOR_URN,
+                },
             ),
         ]
+        results = _run_parallel_uploads(tasks)
         entry_title = payload.get("caption") or "Görsel gönderi"
         cleanup_path = payload.get("image_path", "")
+        cleanup_extra: list[str] = []
     else:
-        results = [
-            upload_to_youtube(
-                payload.get("video_path", ""),
-                title=payload.get("title", ""),
-                description=payload.get("description", ""),
-                tags=payload.get("tags", []),
-                client_id=config.YOUTUBE_CLIENT_ID,
-                client_secret=config.YOUTUBE_CLIENT_SECRET,
-                refresh_token=config.YOUTUBE_REFRESH_TOKEN,
-                thumbnail_path=payload.get("thumbnail_path", ""),
+        cinematic_path = payload.get("video_path", "")
+        split_path = payload.get("split_screen_path") or cinematic_path
+        if split_path and not Path(split_path).is_file():
+            split_path = cinematic_path
+        split_filename = (
+            payload.get("split_screen_filename")
+            or (Path(split_path).name if split_path else "")
+            or payload.get("video_filename", "")
+        )
+
+        job_store.update_job(media_dir, job_id, state="publishing")
+
+        tasks = [
+            (
+                "youtube",
+                upload_to_youtube,
+                (cinematic_path,),
+                {
+                    "title": payload.get("title", ""),
+                    "description": payload.get("description", ""),
+                    "tags": payload.get("tags", []),
+                    "client_id": config.YOUTUBE_CLIENT_ID,
+                    "client_secret": config.YOUTUBE_CLIENT_SECRET,
+                    "refresh_token": config.YOUTUBE_REFRESH_TOKEN,
+                    "thumbnail_path": payload.get("thumbnail_path", ""),
+                    "pinned_comment": payload.get("pinned_comment", ""),
+                },
             ),
-            upload_to_tiktok(
-                payload.get("video_path", ""),
-                title=payload.get("title", ""),
-                client_key=config.TIKTOK_CLIENT_KEY,
-                client_secret=config.TIKTOK_CLIENT_SECRET,
-                token_path=config.TIKTOK_TOKEN_PATH,
-                audited=config.TIKTOK_AUDITED,
+            (
+                "tiktok",
+                upload_to_tiktok,
+                (split_path,),
+                {
+                    "title": payload.get("title", ""),
+                    "client_key": config.TIKTOK_CLIENT_KEY,
+                    "client_secret": config.TIKTOK_CLIENT_SECRET,
+                    "token_path": config.TIKTOK_TOKEN_PATH,
+                    "audited": config.TIKTOK_AUDITED,
+                },
             ),
-            upload_to_instagram(
-                payload.get("video_filename", ""),
-                caption=payload.get("description", ""),
-                ig_user_id=config.META_IG_USER_ID,
-                page_access_token=config.META_PAGE_ACCESS_TOKEN,
-                tunnel_log_path=config.TUNNEL_LOG_PATH,
+            (
+                "instagram",
+                upload_to_instagram,
+                (split_filename,),
+                {
+                    "caption": payload.get("description", ""),
+                    "ig_user_id": config.META_IG_USER_ID,
+                    "page_access_token": config.META_PAGE_ACCESS_TOKEN,
+                    "tunnel_log_path": config.TUNNEL_LOG_PATH,
+                },
             ),
-            upload_to_facebook(
-                payload.get("video_path", ""),
-                description=payload.get("description", ""),
-                page_id=config.META_PAGE_ID,
-                page_access_token=config.META_PAGE_ACCESS_TOKEN,
+            (
+                "facebook",
+                upload_to_facebook,
+                (cinematic_path,),
+                {
+                    "description": payload.get("description", ""),
+                    "page_id": config.META_PAGE_ID,
+                    "page_access_token": config.META_PAGE_ACCESS_TOKEN,
+                },
             ),
         ]
         if _is_configured(config.THREADS_USER_ID) and _is_configured(config.THREADS_ACCESS_TOKEN):
-            results.append(
-                upload_to_threads(
-                    payload.get("video_filename", ""),
-                    caption=f"{payload.get('title', '')}\n\n{payload.get('description', '')}",
-                    threads_user_id=config.THREADS_USER_ID,
-                    access_token=config.THREADS_ACCESS_TOKEN,
-                    tunnel_log_path=config.TUNNEL_LOG_PATH,
+            tasks.append(
+                (
+                    "threads",
+                    upload_to_threads,
+                    (split_filename,),
+                    {
+                        "caption": f"{payload.get('title', '')}\n\n{payload.get('description', '')}",
+                        "threads_user_id": config.THREADS_USER_ID,
+                        "access_token": config.THREADS_ACCESS_TOKEN,
+                        "tunnel_log_path": config.TUNNEL_LOG_PATH,
+                    },
                 )
             )
         if _is_configured(config.X_REFRESH_TOKEN) and _is_configured(config.X_CLIENT_ID):
-            results.append(
-                upload_video_to_x(
-                    payload.get("video_path", ""),
-                    text=f"{payload.get('title', '')}\n\n{' '.join('#' + t for t in payload.get('tags', [])[:3])}",
-                    client_id=config.X_CLIENT_ID,
-                    client_secret=config.X_CLIENT_SECRET,
-                    refresh_token=config.X_REFRESH_TOKEN,
+            tasks.append(
+                (
+                    "x",
+                    upload_video_to_x,
+                    (cinematic_path,),
+                    {
+                        "text": f"{payload.get('title', '')}\n\n{' '.join('#' + t for t in payload.get('tags', [])[:3])}",
+                        "client_id": config.X_CLIENT_ID,
+                        "client_secret": config.X_CLIENT_SECRET,
+                        "refresh_token": config.X_REFRESH_TOKEN,
+                    },
                 )
             )
         if _is_configured(config.PINTEREST_REFRESH_TOKEN) and _is_configured(config.PINTEREST_BOARD_ID):
-            results.append(
-                upload_to_pinterest(
-                    payload.get("video_path", ""),
-                    title=payload.get("title", ""),
-                    description=payload.get("description", ""),
-                    client_id=config.PINTEREST_CLIENT_ID,
-                    client_secret=config.PINTEREST_CLIENT_SECRET,
-                    refresh_token=config.PINTEREST_REFRESH_TOKEN,
-                    board_id=config.PINTEREST_BOARD_ID,
+            tasks.append(
+                (
+                    "pinterest",
+                    upload_to_pinterest,
+                    (cinematic_path,),
+                    {
+                        "title": payload.get("title", ""),
+                        "description": payload.get("description", ""),
+                        "client_id": config.PINTEREST_CLIENT_ID,
+                        "client_secret": config.PINTEREST_CLIENT_SECRET,
+                        "refresh_token": config.PINTEREST_REFRESH_TOKEN,
+                        "board_id": config.PINTEREST_BOARD_ID,
+                    },
                 )
             )
+        results = _run_parallel_uploads(tasks)
         entry_title = payload.get("title", "")
-        cleanup_path = payload.get("video_path", "")
+        cleanup_path = cinematic_path
+        cleanup_extra = []
+        if split_path and split_path != cinematic_path:
+            cleanup_extra.append(split_path)
 
     for r in results:
         log_event(
@@ -397,17 +515,18 @@ def _run_publish(payload: dict) -> dict:
         "kind": kind,
         "platforms": {r["platform"]: r for r in results},
     }
-    append_publish_log(str(Path(config.MEDIA_DIR) / "published_log.json"), entry)
+    append_publish_log(str(media_dir / "published_log.json"), entry)
 
-    pending_path = Path(config.MEDIA_DIR) / "pending.json"
     any_success = any(r["status"] == "success" for r in results)
 
     if any_success:
         Path(cleanup_path).unlink(missing_ok=True)
+        for extra in cleanup_extra:
+            Path(extra).unlink(missing_ok=True)
         thumbnail_path = payload.get("thumbnail_path")
         if thumbnail_path:
             Path(thumbnail_path).unlink(missing_ok=True)
-        pending_path.unlink(missing_ok=True)
+        job_store.clear_pending_mirror(media_dir, job_id)
         success_count = sum(1 for r in results if r["status"] == "success")
         log_event(job_id, "publish_complete", success_count=success_count, total=len(results))
         return {"results": results}
@@ -416,9 +535,10 @@ def _run_publish(payload: dict) -> dict:
     # tam payload'ı sidecar JSON olarak sakla ki Telegram'daki "Tekrar dene"
     # butonu aynı işi yeniden deneyebilsin.
     log_event(job_id, "publish_all_failed", total=len(results))
+    job_store.mark_failed(media_dir, job_id, "all_platforms_failed")
     src = Path(cleanup_path) if cleanup_path else None
     if src and src.is_file():
-        failed_dir = Path(config.MEDIA_DIR) / "failed"
+        failed_dir = media_dir / "failed"
         failed_dir.mkdir(parents=True, exist_ok=True)
         dest = failed_dir / src.name
         if src.resolve() != dest.resolve():
@@ -431,14 +551,25 @@ def _run_publish(payload: dict) -> dict:
         (failed_dir / f"{job_id}.json").write_text(
             json.dumps(retry_payload, ensure_ascii=False), encoding="utf-8"
         )
-    pending_path.unlink(missing_ok=True)
+    job_store.clear_pending_mirror(media_dir, job_id)
     raise AllPlatformsFailedError(job_id, results)
 
 
 def _run_cleanup(filename: str) -> None:
-    file_path = Path(config.MEDIA_DIR) / filename
+    media_dir = Path(config.MEDIA_DIR)
+    file_path = media_dir / filename
     file_path.unlink(missing_ok=True)
-    (Path(config.MEDIA_DIR) / "pending.json").unlink(missing_ok=True)
+    # Also drop split-screen sibling if present.
+    pending = job_store.read_pending_payload(media_dir)
+    if pending:
+        split_name = pending.get("split_screen_filename")
+        if split_name and split_name != filename:
+            (media_dir / split_name).unlink(missing_ok=True)
+        job_id = pending.get("job_id")
+        if job_id:
+            job_store.clear_awaiting(media_dir, job_id)
+            job_store.mark_done(media_dir, job_id)
+    job_store.clear_pending_mirror(media_dir)
 
 
 @app.post("/publish")

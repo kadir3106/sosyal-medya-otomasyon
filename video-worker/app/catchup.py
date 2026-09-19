@@ -48,6 +48,13 @@ async def maybe_catch_up(
     if (Path(media_dir) / "pending.json").is_file():
         return None
 
+    try:
+        from app import jobs as job_store
+        if job_store.has_blocking_job(media_dir):
+            return None
+    except Exception:
+        pass
+
     current = now or datetime.now()
 
     video_marker = str(Path(media_dir) / VIDEO_MARKER_FILENAME)

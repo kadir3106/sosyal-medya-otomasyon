@@ -119,3 +119,45 @@ def test_model_env_override(monkeypatch):
     sg = importlib.reload(script_gen_module)
 
     assert sg.MODEL == "minimax/minimax-m2.7:free"
+
+
+@patch("app.script_gen.session.post")
+def test_generate_script_falls_back_to_secondary_model(mock_post, monkeypatch):
+    monkeypatch.setenv("OPENROUTER_MODEL", "primary/model")
+    monkeypatch.setenv("OPENROUTER_MODEL_SECONDARY", "secondary/model")
+    monkeypatch.setenv("OPENROUTER_MODEL_FALLBACK", "fallback/model")
+    importlib.reload(config_module)
+    sg = importlib.reload(script_gen_module)
+
+    payload = {"script": "s", "title": "t", "description": "d", "tags": ["a"]}
+    fail = Mock()
+    fail.raise_for_status.side_effect = RuntimeError("primary down")
+    mock_post.side_effect = [fail, _mock_response(json.dumps(payload))]
+
+    result = sg.generate_script("Some topic", api_key="fake-key")
+
+    assert result == payload
+    assert mock_post.call_count == 2
+    assert mock_post.call_args_list[0].kwargs["json"]["model"] == "primary/model"
+    assert mock_post.call_args_list[1].kwargs["json"]["model"] == "secondary/model"
+
+
+@patch("app.script_gen.session.post")
+def test_generate_script_retries_strict_json_after_parse_failure(mock_post, monkeypatch):
+    monkeypatch.setenv("OPENROUTER_MODEL", "only/model")
+    monkeypatch.setenv("OPENROUTER_MODEL_SECONDARY", "")
+    monkeypatch.setenv("OPENROUTER_MODEL_FALLBACK", "only/model")
+    importlib.reload(config_module)
+    sg = importlib.reload(script_gen_module)
+
+    payload = {"script": "s", "title": "t", "description": "d", "tags": ["a"]}
+    mock_post.side_effect = [
+        _mock_response("not json at all"),
+        _mock_response(json.dumps(payload)),
+    ]
+
+    result = sg.generate_script("Some topic", api_key="fake-key")
+
+    assert result == payload
+    assert mock_post.call_count == 2
+    assert "valid JSON" in mock_post.call_args_list[1].kwargs["json"]["messages"][-1]["content"]
