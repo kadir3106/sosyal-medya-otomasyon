@@ -135,7 +135,7 @@ def test_handle_callback_pitch_generates_and_sends_preview(tmp_path):
 
     assert mock_send_video.called
     kwargs = mock_send_video.call_args.kwargs
-    assert "Yukarıdaki videoyu onaylıyor musun?" in kwargs["caption"]
+    assert "onaylıyor musun" in kwargs["caption"].lower()
     assert kwargs["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "approve"
 
 

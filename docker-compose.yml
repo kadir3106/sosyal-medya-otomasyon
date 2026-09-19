@@ -76,14 +76,21 @@ services:
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
       - VISUAL_ENGINE=${VISUAL_ENGINE:-hybrid}
       - FAL_KEY=${FAL_KEY}
+      - KLING_MAX_SCENES=${KLING_MAX_SCENES:-3}
       - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
       - ELEVENLABS_VOICE_ID=${ELEVENLABS_VOICE_ID}
       - VIDEO_FORMAT=${VIDEO_FORMAT:-cinematic}
       - CINEMATIC_GRADE=${CINEMATIC_GRADE:-true}
       - ENABLE_SFX=${ENABLE_SFX:-true}
+      - ENABLE_SUBTITLE_EMOJIS=${ENABLE_SUBTITLE_EMOJIS:-false}
       - ENABLE_ANALYTICS_MEMORY=${ENABLE_ANALYTICS_MEMORY:-false}
       - OPENROUTER_MODEL_SECONDARY=${OPENROUTER_MODEL_SECONDARY}
       - OPENROUTER_MODEL_FALLBACK=${OPENROUTER_MODEL_FALLBACK:-google/gemma-4-31b-it:free}
+      # Niche lock: dark wealth EN pool; TR path stays separate.
+      - TOPICS_PATH=${TOPICS_PATH:-/app/data/topics_dark_wealth.json}
+      - TOPICS_PATH_TR=${TOPICS_PATH_TR:-/app/data/video_topics_tr.json}
+      - IMAGE_TOPICS_PATH=${IMAGE_TOPICS_PATH:-/app/data/image_topics.json}
+      - YOUTUBE_PRIVACY_STATUS=${YOUTUBE_PRIVACY_STATUS:-public}
       # Telegram günlük özet mesajı (app/daily_digest.py) — TZ=Europe/Istanbul ile saat gelince gönderilir.
       - DIGEST_HOUR=${DIGEST_HOUR:-21}
       - DIGEST_INTERVAL_SECONDS=${DIGEST_INTERVAL_SECONDS:-300}

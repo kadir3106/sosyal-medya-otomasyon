@@ -175,12 +175,10 @@ def handle_callback(
                 def _deliver(res):
                     if not isinstance(res, dict):
                         return
+                    from app.pipeline import format_approval_caption
+
                     video_path = res.get("video_path")
-                    caption = (
-                        f"🎬 *{res.get('title', title)}*\n\n"
-                        f"{res.get('description', '')}\n\n"
-                        f"Yukarıdaki videoyu onaylıyor musun?"
-                    )
+                    caption = format_approval_caption(res)
                     keyboard = {
                         "inline_keyboard": [
                             [

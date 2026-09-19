@@ -107,9 +107,21 @@ async def test_synthesize_speech_raises_when_no_word_boundaries(tmp_path):
 async def test_synthesize_speech_uses_elevenlabs_when_configured(tmp_path):
     output_path = tmp_path / "speech.mp3"
     fake_words = [{"offset": 0, "duration": 5000000, "text": "Hello"}]
+    meta: dict = {}
 
     with patch("app.tts.config.ELEVENLABS_API_KEY", "fake-key"), \
          patch("app.tts._synthesize_elevenlabs", return_value=fake_words) as mock_eleven:
-        res = await synthesize_speech("Hello", str(output_path))
+        res = await synthesize_speech("Hello", str(output_path), meta_out=meta)
         assert res == fake_words
         mock_eleven.assert_called_once()
+    assert meta["provider"] == "elevenlabs"
+
+
+@patch("app.tts.edge_tts.Communicate", _FakeCommunicate)
+async def test_synthesize_speech_meta_out_reports_edge_when_no_key(tmp_path):
+    output_path = tmp_path / "speech.mp3"
+    meta: dict = {}
+    with patch("app.tts.config.ELEVENLABS_API_KEY", ""):
+        await synthesize_speech("Hello world", str(output_path), meta_out=meta)
+    assert meta["provider"] == "edge"
+    assert meta["edge_reason"] == "missing_key"
