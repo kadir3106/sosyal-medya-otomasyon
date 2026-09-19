@@ -1,0 +1,205 @@
+{
+  "name": "Daily Image Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 12,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      },
+      "id": "d1-schedule",
+      "name": "Daily 12:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.VIDEO_WORKER_URL}}/generate-image",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "d2-generate",
+      "name": "Generate Image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [220, 0],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{$env.TELEGRAM_BOT_TOKEN}}/sendMessage",
+        "sendBody": true,
+        "bodyContentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "chat_id",
+              "value": "={{$env.TELEGRAM_CHAT_ID}}"
+            },
+            {
+              "name": "text",
+              "value": "=⚠️ Bugün görsel üretilemedi: {{$json.error?.message || 'bilinmeyen hata'}}"
+            }
+          ]
+        }
+      },
+      "id": "d3-error",
+      "name": "Send Generation Error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, -160]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.VIDEO_WORKER_URL}}/media/{{$json.image_filename}}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          }
+        }
+      },
+      "id": "d4-download",
+      "name": "Download Image File",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 0]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendPhoto",
+        "chatId": "={{$env.TELEGRAM_CHAT_ID}}",
+        "binaryData": true,
+        "photo": "={{$json.data}}",
+        "caption": "={{$('Generate Image').item.json.caption}}",
+        "additionalFields": {}
+      },
+      "id": "d5-approval",
+      "name": "Send Approval Request",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [660, 0],
+      "credentials": {
+        "telegramApi": {
+          "id": "__TELEGRAM_CRED_ID__",
+          "name": "Telegram - Otomasyon Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{$env.TELEGRAM_CHAT_ID}}",
+        "text": "=Yukarıdaki görseli onaylıyor musun?",
+        "additionalFields": {
+          "reply_markup": {
+            "inline_keyboard": {
+              "rows": {
+                "row": [
+                  {
+                    "text": "✅ Onayla",
+                    "additionalFields": {
+                      "callbackData": "approve"
+                    }
+                  },
+                  {
+                    "text": "❌ Reddet",
+                    "additionalFields": {
+                      "callbackData": "reject"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "id": "d6-buttons",
+      "name": "Send Buttons",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [880, 0],
+      "credentials": {
+        "telegramApi": {
+          "id": "__TELEGRAM_CRED_ID__",
+          "name": "Telegram - Otomasyon Bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Daily 12:00": {
+      "main": [
+        [
+          {
+            "node": "Generate Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Image": {
+      "main": [
+        [
+          {
+            "node": "Download Image File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ],
+      "error": [
+        [
+          {
+            "node": "Send Generation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Image File": {
+      "main": [
+        [
+          {
+            "node": "Send Approval Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Approval Request": {
+      "main": [
+        [
+          {
+            "node": "Send Buttons",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}

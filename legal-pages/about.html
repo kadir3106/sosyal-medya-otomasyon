@@ -1,0 +1,72 @@
+<title>Sosyal Medya Otomasyon</title>
+<style>
+  :root {
+    --ground: #F4F6F9;
+    --surface: #FFFFFF;
+    --ink: #16202B;
+    --muted: #5B6773;
+    --line: #DDE3E9;
+    --accent: #0B6FB8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0F1720; --surface: #17212C; --ink: #E7EDF3;
+      --muted: #93A1AE; --line: #2A3742; --accent: #55A6ED;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #0F1720; --surface: #17212C; --ink: #E7EDF3;
+    --muted: #93A1AE; --line: #2A3742; --accent: #55A6ED;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--ground); color: var(--ink);
+    font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    line-height: 1.6; margin: 0; padding: 48px 20px 80px;
+  }
+  .wrap { max-width: 640px; margin: 0 auto; }
+  h1 { font-size: 28px; margin: 0 0 8px; }
+  .tag { color: var(--muted); font-size: 15px; margin: 0 0 32px; }
+  .card {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 10px; padding: 24px; margin-bottom: 16px;
+  }
+  h2 { font-size: 17px; margin: 0 0 8px; }
+  p { margin: 0; color: var(--muted); font-size: 15px; }
+  a { color: var(--accent); }
+  footer { margin-top: 32px; font-size: 13px; color: var(--muted); }
+</style>
+
+<div class="wrap">
+  <h1>Sosyal Medya Otomasyon</h1>
+  <p class="tag">Kişisel içerik üretim ve yayın sistemi</p>
+
+  <div class="card">
+    <h2>Ne yapar</h2>
+    <p>
+      Günde bir kısa video/görsel içeriği yapay zeka ile üretip (metin, seslendirme,
+      stok görüntü, altyazı), insan onayından geçirdikten sonra kendi sosyal medya
+      hesaplarıma (YouTube, TikTok, Instagram, Facebook, X, LinkedIn) yayınlayan
+      self-hosted, kişisel bir otomasyon sistemidir.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>Kim kullanıyor</h2>
+    <p>
+      Sistem tek bir kullanıcı (geliştiricisi) tarafından, yalnızca kendi hesaplarına
+      içerik yayınlamak için kullanılır. Üçüncü taraf kullanıcı verisi toplamaz,
+      işlemez ya da paylaşmaz.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>İlgili sayfalar</h2>
+    <p>
+      <a href="privacy.html">Gizlilik Politikası</a> ·
+      <a href="terms.html">Kullanım Şartları</a>
+    </p>
+  </div>
+
+  <footer>© 2026 — Kişisel proje, ticari bir ürün değildir.</footer>
+</div>

@@ -1,0 +1,19 @@
+# Cloudflare Quick Tunnel'ın dışarıya verdiği tek yüzey bu Caddy — video-worker'ı
+# doğrudan tünele bağlamıyoruz çünkü FastAPI'nin tüm uçları (/publish, /generate,
+# /cleanup, eskiden /docs) o zaman herkese açık olurdu. Sadece Instagram'ın Reels
+# yayınlamak için ihtiyaç duyduğu public video URL'i (GET /media/*) geçiyor.
+:80 {
+	# `route` şart: Caddy'nin varsayılan direktif sıralamasında matchersiz
+	# respond, matcher'lı reverse_proxy'den ÖNCE çalışıyor (yazım sırası
+	# değil, dahili öncelik listesi geçerli) — route bloğu bunu yazılan
+	# sıraya zorluyor, aksi halde /media/* isteği de 404'e düşer.
+	route {
+		@media {
+			method GET
+			path /media/*
+		}
+		reverse_proxy @media video-worker:8000
+
+		respond 404
+	}
+}

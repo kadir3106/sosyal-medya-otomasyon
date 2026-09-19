@@ -1,0 +1,68 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,DejaVu Sans,90,&H00F8F9FA&,&H0000D7FF&,&H000D0D0D&,&H90000000,-1,0,0,0,100,100,1,0,1,6,3,2,60,60,480,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:00.44,Default,,0,0,0,,{\c&H0000D7FF&}IGNORE{\c&H00F8F9FA&} WHO
+Dialogue: 0,0:00:00.47,0:00:00.59,Default,,0,0,0,,IGNORE {\c&H0000D7FF&}WHO{\c&H00F8F9FA&}
+Dialogue: 0,0:00:00.65,0:00:00.93,Default,,0,0,0,,{\c&H0000D7FF&}WASTES{\c&H00F8F9FA&} YOUR
+Dialogue: 0,0:00:00.97,0:00:01.11,Default,,0,0,0,,WASTES {\c&H0000D7FF&}YOUR{\c&H00F8F9FA&}
+Dialogue: 0,0:00:01.17,0:00:01.68,Default,,0,0,0,,{\c&H0000D7FF&}TIME.{\c&H00F8F9FA&} MARCUS ⏳
+Dialogue: 0,0:00:01.92,0:00:02.33,Default,,0,0,0,,TIME. {\c&H0000D7FF&}MARCUS{\c&H00F8F9FA&}
+Dialogue: 0,0:00:02.38,0:00:02.91,Default,,0,0,0,,{\c&H0000D7FF&}AURELIUS{\c&H00F8F9FA&} HELD
+Dialogue: 0,0:00:03.02,0:00:03.29,Default,,0,0,0,,AURELIUS {\c&H0000D7FF&}HELD{\c&H00F8F9FA&}
+Dialogue: 0,0:00:03.36,0:00:03.55,Default,,0,0,0,,{\c&H0000D7FF&}ONE{\c&H00F8F9FA&} BRUTAL
+Dialogue: 0,0:00:03.58,0:00:03.91,Default,,0,0,0,,ONE {\c&H0000D7FF&}BRUTAL{\c&H00F8F9FA&}
+Dialogue: 0,0:00:03.98,0:00:04.51,Default,,0,0,0,,{\c&H0000D7FF&}RULE:{\c&H00F8F9FA&} PROTECT
+Dialogue: 0,0:00:05.02,0:00:05.43,Default,,0,0,0,,RULE: {\c&H0000D7FF&}PROTECT{\c&H00F8F9FA&}
+Dialogue: 0,0:00:05.46,0:00:05.58,Default,,0,0,0,,{\c&H0000D7FF&}YOUR{\c&H00F8F9FA&} ATTENTION
+Dialogue: 0,0:00:05.63,0:00:06.10,Default,,0,0,0,,YOUR {\c&H0000D7FF&}ATTENTION{\c&H00F8F9FA&}
+Dialogue: 0,0:00:06.22,0:00:06.42,Default,,0,0,0,,{\c&H0000D7FF&}LIKE{\c&H00F8F9FA&} A
+Dialogue: 0,0:00:06.44,0:00:06.49,Default,,0,0,0,,LIKE {\c&H0000D7FF&}A{\c&H00F8F9FA&}
+Dialogue: 0,0:00:06.53,0:00:06.87,Default,,0,0,0,,{\c&H0000D7FF&}SECRET{\c&H00F8F9FA&} WEAPON.
+Dialogue: 0,0:00:06.92,0:00:07.46,Default,,0,0,0,,SECRET {\c&H0000D7FF&}WEAPON.{\c&H00F8F9FA&}
+Dialogue: 0,0:00:07.90,0:00:08.02,Default,,0,0,0,,{\c&H0000D7FF&}HE{\c&H00F8F9FA&} SAW
+Dialogue: 0,0:00:08.09,0:00:08.26,Default,,0,0,0,,HE {\c&H0000D7FF&}SAW{\c&H00F8F9FA&}
+Dialogue: 0,0:00:08.33,0:00:08.92,Default,,0,0,0,,{\c&H0000D7FF&}DISTRACTION{\c&H00F8F9FA&} AS
+Dialogue: 0,0:00:08.99,0:00:09.09,Default,,0,0,0,,DISTRACTION {\c&H0000D7FF&}AS{\c&H00F8F9FA&}
+Dialogue: 0,0:00:09.16,0:00:09.71,Default,,0,0,0,,{\c&H0000D7FF&}THEFT.{\c&H00F8F9FA&} WHEN
+Dialogue: 0,0:00:10.22,0:00:10.43,Default,,0,0,0,,THEFT. {\c&H0000D7FF&}WHEN{\c&H00F8F9FA&}
+Dialogue: 0,0:00:10.50,0:00:10.79,Default,,0,0,0,,{\c&H0000D7FF&}OTHERS{\c&H00F8F9FA&} DISTRACT
+Dialogue: 0,0:00:10.85,0:00:11.31,Default,,0,0,0,,OTHERS {\c&H0000D7FF&}DISTRACT{\c&H00F8F9FA&}
+Dialogue: 0,0:00:11.37,0:00:11.67,Default,,0,0,0,,{\c&H0000D7FF&}YOU,{\c&H00F8F9FA&} THEY
+Dialogue: 0,0:00:11.76,0:00:11.92,Default,,0,0,0,,YOU, {\c&H0000D7FF&}THEY{\c&H00F8F9FA&}
+Dialogue: 0,0:00:11.99,0:00:12.29,Default,,0,0,0,,{\c&H0000D7FF&}STEAL{\c&H00F8F9FA&} YOUR
+Dialogue: 0,0:00:12.36,0:00:12.48,Default,,0,0,0,,STEAL {\c&H0000D7FF&}YOUR{\c&H00F8F9FA&}
+Dialogue: 0,0:00:12.52,0:00:13.18,Default,,0,0,0,,{\c&H0000D7FF&}POTENTIAL.{\c&H00F8F9FA&} DO
+Dialogue: 0,0:00:13.36,0:00:13.51,Default,,0,0,0,,POTENTIAL. {\c&H0000D7FF&}DO{\c&H00F8F9FA&}
+Dialogue: 0,0:00:13.58,0:00:13.72,Default,,0,0,0,,{\c&H0000D7FF&}NOT{\c&H00F8F9FA&} DEFEND.
+Dialogue: 0,0:00:13.76,0:00:14.45,Default,,0,0,0,,NOT {\c&H0000D7FF&}DEFEND.{\c&H00F8F9FA&}
+Dialogue: 0,0:00:14.83,0:00:14.97,Default,,0,0,0,,{\c&H0000D7FF&}DO{\c&H00F8F9FA&} NOT
+Dialogue: 0,0:00:15.05,0:00:15.18,Default,,0,0,0,,DO {\c&H0000D7FF&}NOT{\c&H00F8F9FA&}
+Dialogue: 0,0:00:15.24,0:00:15.83,Default,,0,0,0,,{\c&H0000D7FF&}REACT.{\c&H00F8F9FA&} SIMPLY
+Dialogue: 0,0:00:15.98,0:00:16.32,Default,,0,0,0,,REACT. {\c&H0000D7FF&}SIMPLY{\c&H00F8F9FA&}
+Dialogue: 0,0:00:16.38,0:00:16.57,Default,,0,0,0,,{\c&H0000D7FF&}WALK{\c&H00F8F9FA&} AWAY.
+Dialogue: 0,0:00:16.64,0:00:17.18,Default,,0,0,0,,WALK {\c&H0000D7FF&}AWAY.{\c&H00F8F9FA&}
+Dialogue: 0,0:00:17.62,0:00:17.73,Default,,0,0,0,,{\c&H0000D7FF&}THE{\c&H00F8F9FA&} MAN
+Dialogue: 0,0:00:17.79,0:00:17.96,Default,,0,0,0,,THE {\c&H0000D7FF&}MAN{\c&H00F8F9FA&}
+Dialogue: 0,0:00:18.00,0:00:18.11,Default,,0,0,0,,{\c&H0000D7FF&}WHO{\c&H00F8F9FA&} MASTERS
+Dialogue: 0,0:00:18.17,0:00:18.58,Default,,0,0,0,,WHO {\c&H0000D7FF&}MASTERS{\c&H00F8F9FA&}
+Dialogue: 0,0:00:18.62,0:00:18.78,Default,,0,0,0,,{\c&H0000D7FF&}THIS{\c&H00F8F9FA&} RULE
+Dialogue: 0,0:00:18.85,0:00:19.12,Default,,0,0,0,,THIS {\c&H0000D7FF&}RULE{\c&H00F8F9FA&}
+Dialogue: 0,0:00:19.16,0:00:19.26,Default,,0,0,0,,{\c&H0000D7FF&}IS{\c&H00F8F9FA&} ACTUALLY
+Dialogue: 0,0:00:19.31,0:00:19.67,Default,,0,0,0,,IS {\c&H0000D7FF&}ACTUALLY{\c&H00F8F9FA&}
+Dialogue: 0,0:00:19.74,0:00:20.15,Default,,0,0,0,,{\c&H0000D7FF&}YOU.{\c&H00F8F9FA&} REMEMBER,
+Dialogue: 0,0:00:20.66,0:00:21.16,Default,,0,0,0,,YOU. {\c&H0000D7FF&}REMEMBER,{\c&H00F8F9FA&}
+Dialogue: 0,0:00:21.21,0:00:21.61,Default,,0,0,0,,{\c&H0000D7FF&}IGNORE{\c&H00F8F9FA&} WHO
+Dialogue: 0,0:00:21.64,0:00:21.74,Default,,0,0,0,,IGNORE {\c&H0000D7FF&}WHO{\c&H00F8F9FA&}
+Dialogue: 0,0:00:21.80,0:00:22.10,Default,,0,0,0,,{\c&H0000D7FF&}WASTES{\c&H00F8F9FA&} YOUR
+Dialogue: 0,0:00:22.14,0:00:22.28,Default,,0,0,0,,WASTES {\c&H0000D7FF&}YOUR{\c&H00F8F9FA&}
+Dialogue: 0,0:00:22.32,0:00:22.94,Default,,0,0,0,,{\c&H0000D7FF&}TIME{\c&H00F8F9FA&} ⏳

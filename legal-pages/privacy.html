@@ -1,0 +1,67 @@
+<title>Gizlilik Politikası</title>
+<style>
+  :root {
+    --ground: #F4F6F9; --surface: #FFFFFF; --ink: #16202B;
+    --muted: #5B6773; --line: #DDE3E9; --accent: #0B6FB8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0F1720; --surface: #17212C; --ink: #E7EDF3;
+      --muted: #93A1AE; --line: #2A3742; --accent: #55A6ED;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #0F1720; --surface: #17212C; --ink: #E7EDF3;
+    --muted: #93A1AE; --line: #2A3742; --accent: #55A6ED;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--ground); color: var(--ink);
+    font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    line-height: 1.65; margin: 0; padding: 48px 20px 80px;
+  }
+  .wrap { max-width: 640px; margin: 0 auto; }
+  h1 { font-size: 26px; margin: 0 0 4px; }
+  .updated { color: var(--muted); font-size: 13px; margin: 0 0 32px; }
+  h2 { font-size: 17px; margin: 28px 0 8px; }
+  p, li { color: var(--muted); font-size: 15px; }
+  a { color: var(--accent); }
+</style>
+
+<div class="wrap">
+  <h1>Gizlilik Politikası</h1>
+  <p class="updated">Son güncelleme: 5 Eylül 2026</p>
+
+  <p>
+    "Sosyal Medya Otomasyon", tek bir kullanıcı (geliştiricisi) tarafından
+    kendi sosyal medya hesaplarına içerik yayınlamak için işletilen, self-hosted
+    kişisel bir otomasyon sistemidir. Üçüncü taraf ziyaretçilerden veya son
+    kullanıcılardan veri toplamaz.
+  </p>
+
+  <h2>Hangi veriler işlenir</h2>
+  <p>Sistem yalnızca aşağıdaki verileri, yalnızca kendi işleyişi için tutar:</p>
+  <ul>
+    <li>Yayınlanan içeriğin başlığı, açıklaması ve yayın tarihi (dahili geçmiş kaydı)</li>
+    <li>Bağlı platformların (YouTube, TikTok, Instagram, Facebook, X, LinkedIn)
+      erişim/yenileme token'ları — yalnızca içerik yayınlamak için kullanılır</li>
+    <li>Platform API'lerinden dönen genel performans istatistikleri (izlenme,
+      beğeni sayısı gibi)</li>
+  </ul>
+
+  <h2>Ne yapılmaz</h2>
+  <ul>
+    <li>Platform kullanıcılarının kişisel verileri toplanmaz veya işlenmez</li>
+    <li>Hiçbir veri üçüncü taraflarla satılmaz veya paylaşılmaz</li>
+    <li>Reklam veya izleme amaçlı veri toplama yapılmaz</li>
+  </ul>
+
+  <h2>Veri saklama</h2>
+  <p>
+    Erişim token'ları ve yayın geçmişi, sistemi işleten kişinin kendi sunucusunda
+    (self-hosted) tutulur; harici bir bulut hizmetine gönderilmez.
+  </p>
+
+  <h2>İletişim</h2>
+  <p>Sorularınız için: <a href="mailto:koyustudyo@gmail.com">koyustudyo@gmail.com</a></p>
+</div>

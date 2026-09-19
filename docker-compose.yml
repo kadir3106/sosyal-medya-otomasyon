@@ -1,0 +1,137 @@
+services:
+  n8n:
+    image: n8nio/n8n:latest
+    restart: unless-stopped
+    ports:
+      # Yalnızca localhost'a bağla — aynı ağdaki başka cihazlar erişemesin.
+      # LAN'dan erişmek istersen bilinçli olarak 0.0.0.0'a çevir.
+      - "127.0.0.1:5678:5678"
+    environment:
+      - N8N_SECURE_COOKIE=false
+      - GENERIC_TIMEZONE=Europe/Istanbul
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - VIDEO_WORKER_URL=http://video-worker:8000
+    volumes:
+      - n8n-data:/home/node/.n8n
+      - shared-media:/data/media
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:5678/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      video-worker:
+        condition: service_healthy
+
+  video-worker:
+    build: ./video-worker
+    restart: unless-stopped
+    ports:
+      # Yalnızca localhost — tünel ve n8n zaten docker ağından erişiyor.
+      - "127.0.0.1:8000:8000"
+    environment:
+      - MEDIA_DIR=/data/media
+      - TUNNEL_LOG_PATH=/tunnel-logs/tunnel.log
+      # n8n ile aynı saat dilimi — kaçan-cron yakalama (app/catchup.py) n8n'in
+      # cron saatleriyle (09:00/12:00 Europe/Istanbul) karşılaştırma yapıyor.
+      - TZ=Europe/Istanbul
+      - VIDEO_SCHEDULE_HOUR=9
+      - IMAGE_SCHEDULE_HOUR=12
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - OPENROUTER_MODEL=${OPENROUTER_MODEL}
+      - LLM_API_URL=${LLM_API_URL}
+      - VIDEO_LANG=${VIDEO_LANG}
+      - VIDEO_VOICE=${VIDEO_VOICE}
+      - VIDEO_VOICE_RATE=${VIDEO_VOICE_RATE:-+12%}
+      - BGM_DIR=${BGM_DIR:-/data/media/audio/bgm}
+      - IMAGE_BRAND_NAME=${IMAGE_BRAND_NAME}
+      - IMAGE_ACCENT=${IMAGE_ACCENT}
+      - X_CLIENT_ID=${X_CLIENT_ID}
+      - X_CLIENT_SECRET=${X_CLIENT_SECRET}
+      - X_REFRESH_TOKEN=${X_REFRESH_TOKEN}
+      - LINKEDIN_CLIENT_ID=${LINKEDIN_CLIENT_ID}
+      - LINKEDIN_CLIENT_SECRET=${LINKEDIN_CLIENT_SECRET}
+      - LINKEDIN_REFRESH_TOKEN=${LINKEDIN_REFRESH_TOKEN}
+      - LINKEDIN_AUTHOR_URN=${LINKEDIN_AUTHOR_URN}
+      - PEXELS_API_KEY=${PEXELS_API_KEY}
+      - YOUTUBE_CLIENT_ID=${YOUTUBE_CLIENT_ID}
+      - YOUTUBE_CLIENT_SECRET=${YOUTUBE_CLIENT_SECRET}
+      - YOUTUBE_REFRESH_TOKEN=${YOUTUBE_REFRESH_TOKEN}
+      - YOUTUBE_API_KEY=${YOUTUBE_API_KEY}
+      - TIKTOK_CLIENT_KEY=${TIKTOK_CLIENT_KEY}
+      - TIKTOK_CLIENT_SECRET=${TIKTOK_CLIENT_SECRET}
+      - TIKTOK_AUDITED=${TIKTOK_AUDITED}
+      - META_IG_USER_ID=${META_IG_USER_ID}
+      - META_PAGE_ID=${META_PAGE_ID}
+      - META_PAGE_ACCESS_TOKEN=${META_PAGE_ACCESS_TOKEN}
+      - THREADS_USER_ID=${THREADS_USER_ID}
+      - THREADS_ACCESS_TOKEN=${THREADS_ACCESS_TOKEN}
+      - PINTEREST_CLIENT_ID=${PINTEREST_CLIENT_ID}
+      - PINTEREST_CLIENT_SECRET=${PINTEREST_CLIENT_SECRET}
+      - PINTEREST_REFRESH_TOKEN=${PINTEREST_REFRESH_TOKEN}
+      - PINTEREST_BOARD_ID=${PINTEREST_BOARD_ID}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - VISUAL_ENGINE=${VISUAL_ENGINE:-hybrid}
+      - FAL_KEY=${FAL_KEY}
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
+      - ELEVENLABS_VOICE_ID=${ELEVENLABS_VOICE_ID}
+      - VIDEO_FORMAT=${VIDEO_FORMAT:-cinematic}
+      - CINEMATIC_GRADE=${CINEMATIC_GRADE:-true}
+      - ENABLE_SFX=${ENABLE_SFX:-true}
+      # Telegram günlük özet mesajı (app/daily_digest.py) — TZ=Europe/Istanbul ile saat gelince gönderilir.
+      - DIGEST_HOUR=${DIGEST_HOUR:-21}
+      - DIGEST_INTERVAL_SECONDS=${DIGEST_INTERVAL_SECONDS:-300}
+    volumes:
+      - ./video-worker/app:/app/app
+      - shared-media:/data/media
+      - tunnel-logs:/tunnel-logs
+      - tiktok-token:/data/tiktok-token
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # Cloudflare tünelinin önündeki tek geçit: yalnızca GET /media/* geçirir,
+  # video-worker'ın geri kalan uçlarını (/publish, /generate, /cleanup ...)
+  # internete kapatır. Bkz. caddy/Caddyfile.
+  media-gateway:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+    healthcheck:
+      # Caddy'nin admin API'si (yalnızca container-içi, tünelden erişilemez)
+      # sürecin canlı olduğunu doğrular.
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:2019/config/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      video-worker:
+        condition: service_healthy
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    # Volume dizinleri root'a ait olduğundan (cloudflared non-root çalışır),
+    # --logfile /logs/tunnel.log yazılamıyordu. Root olarak çalıştırıyoruz ki
+    # video-worker tunnel URL'sini /tunnel-logs/tunnel.log'dan okuyabilsin.
+    user: "0:0"
+    command: tunnel --url http://media-gateway:80 --logfile /logs/tunnel.log
+    volumes:
+      - tunnel-logs:/logs
+    depends_on:
+      media-gateway:
+        condition: service_healthy
+
+volumes:
+  n8n-data:
+  shared-media:
+  tunnel-logs:
+  tiktok-token:

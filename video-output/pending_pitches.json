@@ -1,0 +1,26 @@
+[
+  {
+    "id": 1,
+    "category": "tech",
+    "category_label": "💻 Tech & AI Hacks",
+    "title": "3 Insane AI Tools You Didn't Know Existed",
+    "hook": "Stop wasting hours on repetitive work: these 3 free AI tools will blow your mind.",
+    "topic": "Three incredible free AI websites that automate design, research, and coding tasks in seconds"
+  },
+  {
+    "id": 2,
+    "category": "curiosity",
+    "category_label": "🤯 Shocking Truth",
+    "title": "Why Your Brain Deceives You Every Morning",
+    "hook": "The shocking psychological reason you hit the snooze button, and why it ruins your day.",
+    "topic": "The science of sleep inertia and the 5-second rule that resets focus immediately"
+  },
+  {
+    "id": 3,
+    "category": "stoic",
+    "category_label": "🔥 Dark Stoic / Power",
+    "title": "The Rule of Unshakable Focus",
+    "hook": "Marcus Aurelius had one brutal rule about people who waste your time.",
+    "topic": "Stoic philosophy on ruthless time management and ignoring distractions in modern life"
+  }
+]
