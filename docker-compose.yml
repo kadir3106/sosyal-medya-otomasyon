@@ -40,6 +40,8 @@ services:
       - VIDEO_SCHEDULE_HOUR=9
       - IMAGE_SCHEDULE_HOUR=12
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      # Primary model must be passed through — empty → script_gen DEFAULT_MODEL.
+      # airouter ids: groq/qwen/qwen3.8-27b, gemini-flash, smart, auto (not OpenRouter :free).
       - OPENROUTER_MODEL=${OPENROUTER_MODEL}
       - LLM_API_URL=${LLM_API_URL}
       - VIDEO_LANG=${VIDEO_LANG}
@@ -56,6 +58,8 @@ services:
       - LINKEDIN_REFRESH_TOKEN=${LINKEDIN_REFRESH_TOKEN}
       - LINKEDIN_AUTHOR_URN=${LINKEDIN_AUTHOR_URN}
       - PEXELS_API_KEY=${PEXELS_API_KEY}
+      - PIXABAY_API_KEY=${PIXABAY_API_KEY}
+      - ENABLE_MIXKIT_STOCK=${ENABLE_MIXKIT_STOCK:-true}
       - YOUTUBE_CLIENT_ID=${YOUTUBE_CLIENT_ID}
       - YOUTUBE_CLIENT_SECRET=${YOUTUBE_CLIENT_SECRET}
       - YOUTUBE_REFRESH_TOKEN=${YOUTUBE_REFRESH_TOKEN}
@@ -74,9 +78,11 @@ services:
       - PINTEREST_BOARD_ID=${PINTEREST_BOARD_ID}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
-      - VISUAL_ENGINE=${VISUAL_ENGINE:-hybrid}
+      # Default: stock video + light Ken Burns. Opt-in AI: flux_kenburns|hybrid|kling
+      - VISUAL_ENGINE=${VISUAL_ENGINE:-stock}
       - FAL_KEY=${FAL_KEY}
-      - KLING_MAX_SCENES=${KLING_MAX_SCENES:-3}
+      - ALLOW_STOCK_FALLBACK=${ALLOW_STOCK_FALLBACK:-true}
+      - KLING_MAX_SCENES=${KLING_MAX_SCENES:-1}
       - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
       - ELEVENLABS_VOICE_ID=${ELEVENLABS_VOICE_ID}
       - VIDEO_FORMAT=${VIDEO_FORMAT:-cinematic}
@@ -85,7 +91,8 @@ services:
       - ENABLE_SUBTITLE_EMOJIS=${ENABLE_SUBTITLE_EMOJIS:-false}
       - ENABLE_ANALYTICS_MEMORY=${ENABLE_ANALYTICS_MEMORY:-false}
       - OPENROUTER_MODEL_SECONDARY=${OPENROUTER_MODEL_SECONDARY}
-      - OPENROUTER_MODEL_FALLBACK=${OPENROUTER_MODEL_FALLBACK:-google/gemma-4-31b-it:free}
+      # airouter-safe default (not OpenRouter google/gemma-*:free — that 400s on airouter)
+      - OPENROUTER_MODEL_FALLBACK=${OPENROUTER_MODEL_FALLBACK:-gemini-flash}
       # Niche lock: dark wealth EN pool; TR path stays separate.
       - TOPICS_PATH=${TOPICS_PATH:-/app/data/topics_dark_wealth.json}
       - TOPICS_PATH_TR=${TOPICS_PATH_TR:-/app/data/video_topics_tr.json}

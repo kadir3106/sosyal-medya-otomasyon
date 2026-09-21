@@ -74,6 +74,7 @@ def test_format_approval_caption_flags_edge_and_reuse():
     assert "TEKRAR YÜKSEK" in reuse
 
 
+@patch("app.pipeline._notify_telegram_awaiting_approval")
 @patch("app.pipeline.render_card")
 @patch("app.pipeline.render_video")
 @patch("app.pipeline.write_ass")
@@ -82,7 +83,7 @@ def test_format_approval_caption_flags_edge_and_reuse():
 @patch("app.pipeline.generate_script")
 @patch("app.pipeline.select_next_topic")
 async def test_generate_video_persists_quality_telemetry(
-    mock_topic, mock_script, mock_tts, mock_clips, mock_subtitle, mock_render, mock_thumb, tmp_path
+    mock_topic, mock_script, mock_tts, mock_clips, mock_subtitle, mock_render, mock_thumb, mock_tg, tmp_path
 ):
     mock_topic.return_value = "Wealth Topic"
     mock_script.return_value = {
@@ -90,6 +91,8 @@ async def test_generate_video_persists_quality_telemetry(
         "title": "Why They Refused",
         "description": "Hidden. #DarkWealth",
         "tags": ["wealth"],
+        "visual_prompts": ["Rolex crown macro chiaroscuro"],
+        "concrete_nouns": ["Rolex", "crown"],
     }
 
     async def _tts(text, path, voice=None, rate=None, meta_out=None):
@@ -115,14 +118,19 @@ async def test_generate_video_persists_quality_telemetry(
 
     mock_render.side_effect = fake_render
 
-    with patch("app.pipeline.config") as mock_config:
+    with patch("app.pipeline.config") as mock_config, \
+         patch(
+             "app.ai_video_engine.generate_video_scenes",
+             return_value=["/work/clip_0.mp4"],
+         ):
         mock_config.MEDIA_DIR = str(tmp_path)
         mock_config.OPENROUTER_API_KEY = "or-key"
         mock_config.PEXELS_API_KEY = "px-key"
         mock_config.ENABLE_SFX = False
         mock_config.ENABLE_SUBTITLE_EMOJIS = False
         mock_config.VIDEO_FORMAT = "cinematic"
-        mock_config.VISUAL_ENGINE = "hybrid"
+        mock_config.VISUAL_ENGINE = "flux_kenburns"
+        mock_config.ALLOW_STOCK_FALLBACK = False
         mock_config.CINEMATIC_GRADE = True
         mock_config.IMAGE_BRAND_NAME = "KALI"
         mock_config.IMAGE_ACCENT = "#38BDF8"
@@ -139,7 +147,7 @@ async def test_generate_video_persists_quality_telemetry(
     q = result["quality"]
     assert q["hook"].startswith("They refused my cash")
     assert q["tts"] == "elevenlabs"
-    assert q["engine"] == "hybrid"
+    assert q["engine"] == "flux_kenburns"
     assert q["clip_reuse_ratio"] == 1.0
     assert "warning" not in q
 
@@ -151,6 +159,7 @@ async def test_generate_video_persists_quality_telemetry(
     assert mock_subtitle.call_args.kwargs["add_emojis"] is False
 
 
+@patch("app.pipeline._notify_telegram_awaiting_approval")
 @patch("app.pipeline.render_card")
 @patch("app.pipeline.render_video")
 @patch("app.pipeline.write_ass")
@@ -159,7 +168,7 @@ async def test_generate_video_persists_quality_telemetry(
 @patch("app.pipeline.generate_script")
 @patch("app.pipeline.select_next_topic")
 async def test_generate_video_marks_edge_tts_warning(
-    mock_topic, mock_script, mock_tts, mock_clips, mock_subtitle, mock_render, mock_thumb, tmp_path
+    mock_topic, mock_script, mock_tts, mock_clips, mock_subtitle, mock_render, mock_thumb, mock_tg, tmp_path
 ):
     mock_topic.return_value = "Topic"
     mock_script.return_value = {
@@ -196,6 +205,7 @@ async def test_generate_video_marks_edge_tts_warning(
         mock_config.ENABLE_SUBTITLE_EMOJIS = False
         mock_config.VIDEO_FORMAT = "cinematic"
         mock_config.VISUAL_ENGINE = "stock"
+        mock_config.ALLOW_STOCK_FALLBACK = False
         mock_config.CINEMATIC_GRADE = True
         mock_config.IMAGE_BRAND_NAME = "KALI"
         mock_config.IMAGE_ACCENT = "#38BDF8"

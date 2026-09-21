@@ -30,10 +30,14 @@ class Config:
     # kaçan-cron yakalama (app/catchup.py) bu saatleri referans alıyor.
     VIDEO_SCHEDULE_HOUR = int(os.environ.get("VIDEO_SCHEDULE_HOUR", "9"))
     IMAGE_SCHEDULE_HOUR = int(os.environ.get("IMAGE_SCHEDULE_HOUR", "12"))
-    # Default EN pool = dark wealth (niche lock). Trivia topics.json is opt-in.
+    # Default EN pool = dark wealth (niche lock). Trivia topics.json is remapped away.
     TOPICS_PATH = os.environ.get(
         "TOPICS_PATH", "/app/data/topics_dark_wealth.json"
     )
+    # Guard: if .env still points at trivia topics.json, force dark wealth.
+    _topics_name = Path(TOPICS_PATH).name.lower()
+    if _topics_name in ("topics.json", "video_topics.json", "trivia.json") or "trivia" in _topics_name:
+        TOPICS_PATH = str(Path(TOPICS_PATH).with_name("topics_dark_wealth.json"))
     TOPICS_PATH_TR = os.environ.get("TOPICS_PATH_TR", "/app/data/video_topics_tr.json")
     VIDEO_LANG = os.environ.get("VIDEO_LANG", "en")
     VIDEO_VOICE = os.environ.get("VIDEO_VOICE", "")
@@ -53,6 +57,11 @@ class Config:
     LINKEDIN_REFRESH_TOKEN = os.environ.get("LINKEDIN_REFRESH_TOKEN", "")
     LINKEDIN_AUTHOR_URN = os.environ.get("LINKEDIN_AUTHOR_URN", "")
     PEXELS_API_KEY = os.environ.get("PEXELS_API_KEY", "")
+    PIXABAY_API_KEY = os.environ.get("PIXABAY_API_KEY", "")
+    # Mixkit has no official API — optional HTML search fallback (no key).
+    ENABLE_MIXKIT_STOCK = (
+        os.environ.get("ENABLE_MIXKIT_STOCK", "true").lower() == "true"
+    )
     YOUTUBE_CLIENT_ID = os.environ.get("YOUTUBE_CLIENT_ID", "")
     YOUTUBE_CLIENT_SECRET = os.environ.get("YOUTUBE_CLIENT_SECRET", "")
     YOUTUBE_REFRESH_TOKEN = os.environ.get("YOUTUBE_REFRESH_TOKEN", "")
@@ -72,13 +81,20 @@ class Config:
     PINTEREST_CLIENT_SECRET = os.environ.get("PINTEREST_CLIENT_SECRET", "")
     PINTEREST_REFRESH_TOKEN = os.environ.get("PINTEREST_REFRESH_TOKEN", "")
     PINTEREST_BOARD_ID = os.environ.get("PINTEREST_BOARD_ID", "")
-    # Görsel motoru: 'hybrid' (Hook sahnesi Kling AI, diğerleri FLUX), 'kling', 'ai' veya 'stock'
-    VISUAL_ENGINE = os.environ.get("VISUAL_ENGINE", "hybrid")
+    # Görsel motoru (default = stok video + hafif Ken Burns; Fal opsiyonel):
+    #   stock — Pexels → Pixabay → Mixkit (konu-anchored); render'da hafif zoompan
+    #   flux_kenburns / hybrid_flux — Fal Flux stills + FFmpeg Ken Burns
+    #   hybrid — opsiyonel: hook'ta 0–1 Kling, gövde Flux+Ken Burns
+    #   kling — opt-in T2V (kota: KLING_MAX_SCENES), kalan Flux
+    #   ai — Pollinations/Flux still path (legacy)
+    VISUAL_ENGINE = os.environ.get("VISUAL_ENGINE", "stock")
     FAL_KEY = os.environ.get("FAL_KEY", "")
-    # Tek videoda Kling ile üretilecek en fazla sahne. Kling sahne başına
-    # dakikalar sürüyor; tüm sahneleri Kling'e vermek üretimi saatlerce
-    # kilitleyip kotayı yakardı. Kalan sahneler stok HD videodan gelir.
-    KLING_MAX_SCENES = int(os.environ.get("KLING_MAX_SCENES", "3"))
+    # Stock engine primary path. true also lets Flux miss fall through to stock.
+    ALLOW_STOCK_FALLBACK = (
+        os.environ.get("ALLOW_STOCK_FALLBACK", "true").lower() == "true"
+    )
+    # Tek videoda Kling ile üretilecek en fazla sahne (yalnızca VISUAL_ENGINE=kling|hybrid).
+    KLING_MAX_SCENES = int(os.environ.get("KLING_MAX_SCENES", "1"))
     ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "")
     ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "")
     ENABLE_SFX = os.environ.get("ENABLE_SFX", "true").lower() == "true"
@@ -90,10 +106,12 @@ class Config:
     ENABLE_ANALYTICS_MEMORY = (
         os.environ.get("ENABLE_ANALYTICS_MEMORY", "false").lower() == "true"
     )
-    # LLM waterfall: primary (OPENROUTER_MODEL) → secondary → free fallback
+    # LLM waterfall: primary (OPENROUTER_MODEL) → secondary → fallback
+    # Fallback default is airouter-safe (gemini-flash). OpenRouter :free ids
+    # like google/gemma-4-31b-it:free are NOT listed by airouter and return 400.
     OPENROUTER_MODEL_SECONDARY = os.environ.get("OPENROUTER_MODEL_SECONDARY", "")
     OPENROUTER_MODEL_FALLBACK = os.environ.get(
-        "OPENROUTER_MODEL_FALLBACK", "google/gemma-4-31b-it:free"
+        "OPENROUTER_MODEL_FALLBACK", "gemini-flash"
     )
     # Video formatı: 'cinematic' (lüks/belgesel tek ekran), 'split_screen' veya 'standard'
     VIDEO_FORMAT = os.environ.get("VIDEO_FORMAT", "cinematic")

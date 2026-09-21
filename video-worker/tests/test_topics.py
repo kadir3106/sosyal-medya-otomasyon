@@ -1,5 +1,5 @@
 import json
-from app.topics import release_topic, select_next_topic
+from app.topics import release_topic, resolve_en_topics_path, select_next_topic
 
 
 def _write_topics(path, topics):
@@ -74,3 +74,14 @@ def test_release_topic_noop_when_topic_not_used(tmp_path):
 
 def test_release_topic_noop_when_no_state_file(tmp_path):
     release_topic("Topic A", str(tmp_path / "yok.json"))  # hata vermez
+
+
+def test_resolve_en_topics_path_remaps_trivia_topics_json():
+    assert resolve_en_topics_path("/app/data/topics.json").endswith(
+        "topics_dark_wealth.json"
+    )
+    assert resolve_en_topics_path("/app/data/topics_dark_wealth.json").endswith(
+        "topics_dark_wealth.json"
+    )
+    remapped = resolve_en_topics_path("/data/topics_trivia.json")
+    assert remapped.endswith("topics_dark_wealth.json")

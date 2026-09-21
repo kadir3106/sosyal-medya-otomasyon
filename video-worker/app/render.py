@@ -73,11 +73,10 @@ def _normalize_filter() -> str:
 
 
 def _zoompan_filter(clip_duration: float = CLIP_DURATION) -> str:
-    """Ken Burns: her karede zoom'u kademeli artıran zoompan zinciri.
+    """Ken Burns for STILLS only: gradual zoom via zoompan.
 
-    d=1 kritik: her giriş karesi için 1 çıktı üretir (süre/hız korunur; d>1
-    slow-motion yapar). Zoom, zoompan'ın kendi `zoom` state değişkeniyle
-    her karede ZOOM_STEP kadar büyür ve 1+ZOOM_MAX'ta tavanlar.
+    d=1: one output frame per input frame (no slow-mo). Do NOT use this on
+    live stock video — zoompan freezes frame 0 into a slideshow.
     """
     zoom_step = ZOOM_MAX / (clip_duration * FPS)
     max_zoom = 1 + ZOOM_MAX
@@ -86,6 +85,20 @@ def _zoompan_filter(clip_duration: float = CLIP_DURATION) -> str:
         f"d=1:"
         f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
         f"s={WIDTH}x{HEIGHT}:fps={FPS}"
+    )
+
+
+def _live_kenburns_filter(duration: float) -> str:
+    """Subtle zoom-in on motion video (stock clips) without freezing frames.
+
+    Scales each frame by up to ZOOM_MAX over the scene, then center-crops
+    back to 1080x1920. Uses scale eval=frame — not zoompan.
+    """
+    d = max(float(duration), 0.01)
+    return (
+        f"scale=w='iw*(1+{ZOOM_MAX}*min(t/{d:.3f}\\,1))':"
+        f"h='ih*(1+{ZOOM_MAX}*min(t/{d:.3f}\\,1))':eval=frame,"
+        f"crop={WIDTH}:{HEIGHT}:(in_w-{WIDTH})/2:(in_h-{HEIGHT})/2"
     )
 
 
@@ -312,8 +325,8 @@ def render_video(
         )
 
     # Her input için normalize + sabit süre (trim) filtresi.
-    # ÖNEMLİ: Gerçek hareketli videolarda zoompan ASLA uygulanmaz, çünkü ffmpeg
-    # zoompan filtresi videonun ilk karesini dondurup slayt gösterisi yapar.
+    # STILLS → zoompan Ken Burns. LIVE stock video → scale/crop Ken Burns
+    # (zoompan freezes frame 0 — never apply it to motion clips).
     normalize = _normalize_filter()
     zoompan = _zoompan_filter(clip_duration=clip_duration)
     inputs: list[str] = []
@@ -335,10 +348,13 @@ def render_video(
             f"tpad=stop_mode=clone:stop_duration={scene_duration},"
             f"trim=duration={scene_duration},setpts=PTS-STARTPTS,fps={FPS}"
         )
-        if is_image or apply_zoompan:
+        if is_image:
             chain = f"[{i}:v]{normalize},{zoompan},{tail}"
+        elif apply_zoompan:
+            live_kb = _live_kenburns_filter(scene_duration)
+            chain = f"[{i}:v]{normalize},{live_kb},{tail}"
         else:
-            # Gerçek 60fps/30fps akıcı hareketli video: Tam hareket korunur!
+            # Native motion preserved (no Ken Burns).
             chain = f"[{i}:v]{normalize},{tail}"
         if cinematic_grade:
             # Sahne başına farklı doku: aynı grain/vinyet tekrarı kırılır.
