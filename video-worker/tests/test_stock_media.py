@@ -97,7 +97,12 @@ def test_fetch_stock_clips_uses_fallback_when_no_api_key(tmp_path):
         mock_fallback.return_value = [str(tmp_path / "fallback_0.mp4")]
 
         result = fetch_stock_clips(
-            ["flamingo"], count=2, api_key="", output_dir=str(tmp_path)
+            ["flamingo"],
+            count=2,
+            api_key="",
+            output_dir=str(tmp_path),
+            enable_mixkit=False,
+            pixabay_api_key="",
         )
 
     assert result == [str(tmp_path / "fallback_0.mp4")]
@@ -105,18 +110,23 @@ def test_fetch_stock_clips_uses_fallback_when_no_api_key(tmp_path):
 
 
 @patch("app.stock_media._generate_fallback_clips")
-@patch("app.stock_media._search_portrait_video", return_value=(None, None))
+@patch("app.stock_media._search_stock_waterfall", return_value=None)
 def test_fetch_stock_clips_falls_back_when_pexels_empty(
     mock_search, mock_fallback, tmp_path
 ):
     mock_fallback.return_value = [str(tmp_path / "fallback_0.mp4")]
 
     result = fetch_stock_clips(
-        ["flamingo"], count=2, api_key="fake-key", output_dir=str(tmp_path)
+        ["flamingo"],
+        count=2,
+        api_key="fake-key",
+        output_dir=str(tmp_path),
+        enable_mixkit=False,
     )
 
     assert result == [str(tmp_path / "fallback_0.mp4")]
     mock_fallback.assert_called_once_with(2, str(tmp_path))
+    assert mock_search.called
 
 
 @patch("app.stock_media.subprocess.run")
@@ -158,9 +168,10 @@ def _multi_video_response(videos):
     return resp
 
 
-def _portrait_video(video_id, link):
+def _portrait_video(video_id, link, url=None):
     return {
         "id": video_id,
+        "url": url or f"https://www.pexels.com/video/clip-{video_id}/",
         "video_files": [{"link": link, "width": 1080, "height": 1920}],
     }
 
@@ -190,24 +201,116 @@ def test_search_portrait_video_excludes_already_used_ids(mock_get):
         _portrait_video(2, "https://example.com/fresh.mp4"),
     ])
 
-    video_id, link = _search_portrait_video("nature", "fake-key", exclude_ids={1})
+    video_id, link, reused = _search_portrait_video("nature", "fake-key", exclude_ids={1})
 
     assert video_id == 2
     assert link == "https://example.com/fresh.mp4"
+    assert reused is False
 
 
 @patch("app.stock_media.session.get")
-def test_search_portrait_video_falls_back_to_full_pool_when_all_excluded(mock_get):
+def test_search_portrait_video_refuses_used_ids_by_default(mock_get):
     mock_get.return_value = _multi_video_response([
         _portrait_video(1, "https://example.com/a.mp4"),
     ])
 
-    # Havuzdaki tek video da hariç tutulan listede — yine de bir sonuç dönmeli,
-    # üretim tekrar riski yüzünden asla durmamalı.
-    video_id, link = _search_portrait_video("nature", "fake-key", exclude_ids={1})
+    # Havuzdaki tek video hariç tutulan listede — sessiz reuse YOK (konu drift).
+    video_id, link, reused = _search_portrait_video("nature", "fake-key", exclude_ids={1})
+
+    assert video_id is None
+    assert link is None
+    assert reused is False
+
+
+@patch("app.stock_media.session.get")
+def test_search_portrait_video_allows_used_id_reuse_when_opted_in(mock_get):
+    mock_get.return_value = _multi_video_response([
+        _portrait_video(1, "https://example.com/a.mp4"),
+    ])
+
+    video_id, link, reused = _search_portrait_video(
+        "nature", "fake-key", exclude_ids={1}, allow_used_id_reuse=True
+    )
 
     assert video_id == 1
     assert link == "https://example.com/a.mp4"
+    assert reused is True
+
+
+def test_build_scene_search_query_anchors_to_topic_not_generic_wealth():
+    from app.stock_media import build_scene_search_query
+
+    q = build_scene_search_query(
+        "Rolex Swiss trust / dark wealth",
+        prompt="cinematic dramatic photorealistic 8k luxury lifestyle dolly",
+        keyword_hint="luxury",
+        scene_index=0,
+    )
+    low = q.lower()
+    assert "rolex" in low or "swiss" in low
+    assert low != "luxury business"
+    assert "luxury lifestyle" not in low
+
+
+def test_build_scene_search_query_prefers_rich_scene_query():
+    from app.stock_media import build_scene_search_query
+
+    q = build_scene_search_query(
+        "Rolex Swiss trust",
+        prompt="ignored fluff",
+        scene_query="swiss bank vault legal documents corporate trust papers",
+        mode="finance_docs",
+    )
+    low = q.lower()
+    assert "vault" in low or "document" in low or "legal" in low
+    assert "construction" not in low
+
+
+def test_resolve_scene_queries_uses_llm_scene_stock_queries():
+    from app.stock_media import resolve_scene_queries
+
+    queries = resolve_scene_queries(
+        scene_count=2,
+        topic="Rolex Foundation Swiss trust",
+        script="Rolex is a tax-free Swiss trust. Watchmakers build every crown.",
+        scene_stock_queries=[
+            {"query": "swiss bank vault legal contract papers", "mode": "finance_docs"},
+            {"query": "luxury watchmaker loupe mechanical gears", "mode": "watchmaking"},
+        ],
+    )
+    assert len(queries) == 2
+    assert "vault" in queries[0].lower() or "legal" in queries[0].lower() or "contract" in queries[0].lower()
+    assert "watch" in queries[1].lower() or "gear" in queries[1].lower() or "loupe" in queries[1].lower()
+
+
+def test_detect_visual_mode_finance_and_watch():
+    from app.stock_media import detect_visual_mode
+
+    assert detect_visual_mode("tax-free Swiss trust shareholders") in (
+        "finance_docs",
+        "vault",
+        "chart",
+    )
+    assert detect_visual_mode("Rolex watchmaker gears mechanism") == "watchmaking"
+
+
+def test_score_rejects_construction_slug_for_watch_query():
+    from app.stock_media import _score_stock_candidate
+
+    assert _score_stock_candidate(
+        "https://www.pexels.com/video/construction-site-excavator-123/",
+        "luxury watchmaker gears",
+    ) < 0
+
+
+def test_build_scene_search_query_rotates_topic_anchors_across_scenes():
+    from app.stock_media import build_scene_search_query
+
+    topic = "Rolex Swiss vault Geneva"
+    q0 = build_scene_search_query(topic, scene_index=0)
+    q1 = build_scene_search_query(topic, scene_index=1)
+    # Different lead term reduces identical page-1 Pexels hits.
+    assert q0.split()[0].lower() != q1.split()[0].lower() or q0 != q1
 
 
 @patch("app.stock_media.session.get")
@@ -219,8 +322,84 @@ def test_fetch_stock_clips_persists_newly_used_ids(mock_get, tmp_path):
     ]
 
     fetch_stock_clips(
-        ["flamingo"], count=1, api_key="fake-key",
-        output_dir=str(tmp_path), state_path=state_path,
+        ["flamingo"],
+        count=1,
+        api_key="fake-key",
+        output_dir=str(tmp_path),
+        state_path=state_path,
+        enable_mixkit=False,
     )
 
-    assert _load_used_clip_ids(state_path) == {42}
+    assert _load_used_clip_ids(state_path) == {"pexels:42"}
+
+
+@patch("app.stock_media._download_file")
+@patch("app.stock_media._search_portrait_video", return_value=(None, None, False))
+@patch("app.stock_media._search_pixabay_video")
+def test_fetch_stock_clips_falls_through_to_pixabay(
+    mock_pixabay, mock_pexels, mock_download, tmp_path
+):
+    mock_pixabay.return_value = (99, "https://example.com/pixabay.mp4", False)
+    meta = {}
+
+    result = fetch_stock_clips(
+        ["rolex watch"],
+        count=1,
+        api_key="pexels-key",
+        pixabay_api_key="pixabay-key",
+        enable_mixkit=False,
+        output_dir=str(tmp_path),
+        meta_out=meta,
+        fallback_on_empty=False,
+    )
+
+    assert result == [str(tmp_path / "clip_0.mp4")]
+    assert meta["providers"] == ["pixabay"]
+    assert meta["scene_relevance"][0]["source"] == "pixabay"
+    mock_download.assert_called_once()
+
+
+@patch("app.stock_media.session.get")
+def test_search_pixabay_video_picks_tallest_variant(mock_get):
+    from app.stock_media import _search_pixabay_video
+
+    resp = Mock()
+    resp.raise_for_status = Mock()
+    resp.json.return_value = {
+        "hits": [
+            {
+                "id": 7,
+                "videos": {
+                    "large": {"url": "https://cdn.example/large.mp4", "width": 1920, "height": 1080},
+                    "medium": {"url": "https://cdn.example/med.mp4", "width": 720, "height": 1280},
+                    "small": {"url": "https://cdn.example/small.mp4", "width": 480, "height": 640},
+                },
+            }
+        ]
+    }
+    mock_get.return_value = resp
+
+    vid, url, reused = _search_pixabay_video("swiss watch", "key")
+    assert vid == 7
+    assert url == "https://cdn.example/med.mp4"
+    assert reused is False
+
+
+@patch("app.stock_media.session.get")
+def test_search_mixkit_video_extracts_mp4_urls(mock_get):
+    from app.stock_media import _search_mixkit_video
+
+    resp = Mock()
+    resp.status_code = 200
+    resp.raise_for_status = Mock()
+    resp.text = (
+        '<html><video src="https://assets.mixkit.co/videos/preview/mixkit-clock-123.mp4">'
+        "</video></html>"
+    )
+    mock_get.return_value = resp
+
+    vid, url, reused = _search_mixkit_video("swiss clock")
+    assert vid == "mixkit-clock-123"
+    assert url.endswith("mixkit-clock-123.mp4")
+    assert reused is False
+

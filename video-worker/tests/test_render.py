@@ -186,7 +186,9 @@ def test_render_video_single_scene_uses_simple_filtergraph(
     assert "-map" in cmd
     assert "1:a:0" in cmd  # 1 video input -> audio 1:a:0
     assert "-filter_complex" in cmd
-    assert "zoompan=" in joined
+    # mp4 stock path: live Ken Burns (scale eval=frame), not freeze-frame zoompan
+    assert "zoompan=" not in joined
+    assert "eval=frame" in joined
     assert "xfade=" not in joined  # tek sahnede geçiş yok
     assert "subtitles=" in joined
     assert str(output_path) in cmd
@@ -236,10 +238,11 @@ def test_render_video_derives_scene_count_from_audio_and_never_loops_raw(
     # concat demuxer kullanılmadı.
     assert "concat.txt" not in joined
 
-    # Her input'ta normalize + Ken Burns zoompan.
-    assert joined.count("zoompan=") == 10
+    # Her input'ta normalize + live Ken Burns (mp4 → scale eval=frame, not zoompan).
+    assert "zoompan=" not in joined
+    assert joined.count("eval=frame") == 10
     assert joined.count("force_original_aspect_ratio=increase") == 10
-    assert joined.count("crop=1080:1920") == 10
+    assert joined.count("crop=1080:1920") >= 10
 
     # Klip yetmediği için tekrar var, ama klipler ARKA ARKAYA gelmez ve
     # tekrar eden kullanım klibin farklı bir anından başlatılır.
@@ -335,7 +338,31 @@ def test_render_video_without_zoompan_keeps_native_video_motion(
     cmd = mock_run.call_args.args[0]
     joined = " ".join(cmd)
     assert "zoompan=" not in joined
+    assert "eval=frame" not in joined
     assert "fps=30" in joined
     assert "scale=1080:1920" in joined
 
+
+@patch("app.render.get_audio_duration", return_value=4.0)
+@patch("app.render.subprocess.run")
+def test_render_stock_video_uses_live_kenburns_not_freeze_zoompan(
+    mock_run, mock_duration, tmp_path
+):
+    """Stock mp4 + apply_zoompan → live scale/crop Ken Burns, never zoompan."""
+    mock_run.return_value = Mock(returncode=0, stdout="", stderr="")
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"DATA")
+
+    render_video(
+        [str(clip)],
+        str(tmp_path / "speech.mp3"),
+        str(tmp_path / "subs.ass"),
+        str(tmp_path / "out.mp4"),
+        str(tmp_path),
+        apply_zoompan=True,
+    )
+
+    joined = " ".join(mock_run.call_args.args[0])
+    assert "zoompan=" not in joined
+    assert "eval=frame" in joined
 

@@ -9,13 +9,24 @@ from app.http_client import session
 logger = logging.getLogger(__name__)
 
 DEFAULT_API_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_MODEL = "google/gemma-4-31b-it:free"
+# airouter-safe default when OPENROUTER_MODEL is unset. OpenRouter :free ids
+# (e.g. google/gemma-4-31b-it:free) are rejected by airouter with HTTP 400.
+DEFAULT_MODEL = "gemini-flash"
 REQUIRED_KEYS = ("script", "title", "description", "tags")
+
+# Homogeneous free-model openers — refuse / diversify away from these.
+BANNED_HOOK_PREFIXES = (
+    "nobody tells you",
+    "the elite secretly",
+    "what they don't want you to know",
+    "did you know",
+    "here's the thing",
+)
 
 # LLM endpoint + model .env üzerinden değiştirilebilir:
 #   LLM_API_URL      -> kendi LiteLLM/openai-compatible gateway'ine yönlendirmek için
-#                       (örn. http://host.docker.internal:4000/v1)
-#   OPENROUTER_MODEL -> primary model (boşsa DEFAULT_MODEL)
+#                       (örn. http://host.docker.internal:20128/v1)
+#   OPENROUTER_MODEL -> primary model (boşsa DEFAULT_MODEL); compose MUST pass it
 #   OPENROUTER_MODEL_SECONDARY / OPENROUTER_MODEL_FALLBACK -> waterfall
 def _resolve_url(raw: str | None) -> str:
     url = raw or DEFAULT_API_URL
@@ -56,6 +67,8 @@ Your mission: produce high-retention video scripts that hook in the first 2 seco
 1. HOOK (0 - 3s, first 7-10 words):
    - Immediate cognitive disruption or forbidden paradox that challenges common assumptions.
    - NEVER use greetings ("Hello", "Did you know"). Drop the viewer straight into the fire.
+   - FORBIDDEN template openers: "Nobody tells you…", "The elite secretly…", "What they don't want you to know…".
+   - Generate 2–3 DISTINCT PeakMotivation / Hormozi-style curiosity hooks (different angles: ownership paradox, access gate, invisible rule). Put them in hook_alternatives; open the script with the strongest one.
 2. BUILD-UP / TENSION (3 - 15s):
    - An untold rule, psychological mechanism, or high-stakes mystery.
    - Short, punchy, rhythmic sentences. Breathless pacing that gives the viewer zero excuse to swipe.
@@ -70,16 +83,35 @@ Your mission: produce high-retention video scripts that hook in the first 2 seco
 
 Return ONLY a valid JSON object with these exact keys, no markdown fences:
 {{
-  "script": "the 55-65 word narration script following the 4-step blueprint",
+  "hook_alternatives": ["2-3 distinct curiosity hooks (7-14 words each), different angles — no shared template opener"],
+  "script": "the 55-65 word narration script; MUST start with the chosen hook from hook_alternatives",
   "title": "high-CTR curiosity title under 48 chars",
   "description": "1 punchy teaser sentence + 3 hashtags",
   "pinned_comment": "polarized debate-igniting question under 18 words",
   "tags": ["5-7", "viral", "niche", "tags"],
   "visual_prompts": [
-    "ONE cinematic 9:16 vertical prompt per sentence (8-12 prompts). Specify dramatic chiaroscuro lighting, camera moves (dolly push, low angle, macro), 8k photorealistic detail, always in English."
+    "ONE cinematic 9:16 vertical prompt per sentence (8-12). MUST name concrete topic subjects (e.g. Rolex crown logo, Swiss Alps vault, Geneva watchmaker bench) — never generic 'luxury lifestyle'. Dark Wealth / old-money chiaroscuro, English only."
   ],
-  "visual_keywords": ["5", "cinematic", "English", "search", "terms"]
-}}"""
+  "visual_keywords": ["5 topic-specific English search terms, not generic wealth/luxury"],
+  "concrete_nouns": ["4-8 concrete nouns/proper names from the topic for Flux prompts, e.g. Rolex, crown, vault, Geneva"],
+  "scene_stock_queries": [
+    {{
+      "query": "3-6 SPECIFIC English stock-search nouns for that sentence (e.g. 'swiss bank vault legal contract papers corporate trust' OR 'luxury watchmaker magnifying glass gear mechanism close-up') — NEVER generic 'luxury business city street construction'",
+      "mode": "watchmaking|finance_docs|vault|chart|boardroom|generic"
+    }}
+  ]
+}}
+
+# scene_stock_queries RULES (critical for B-roll match):
+- One object per script sentence (same order as narration). Length = number of sentences (typically 4-8).
+- query MUST mirror THAT sentence's meaning, not the whole topic.
+  * "tax-free Swiss trust" → "swiss bank vault, legal documents, corporate trust papers"
+  * "watchmaker / Rolex craft" → "luxury watch making, watchmaker loupe, mechanical watch gears"
+  * "shareholders / stocks" → "stock market chart screen, trading floor monitors, equity graph"
+  * "foundation / ownership papers" → "signing legal contract, notary stamp, corporate documents desk"
+- mode picks the visual family so search can prioritize charts/docs vs craft footage.
+- Ban irrelevant B-roll: construction sites, random streets, crowds, gyms, food, beaches.
+"""
 
 PROMPT_TEMPLATE_TR = """# Rol ve Kimlik
 PeakMotivation ve Alex Hormozi tarzında; lüks, güç dinamikleri, servet psikolojisi ve modern stoisizm alanında milyarlarca izlenmeye ulaşan hesapların kıdemli içerik direktörü ve kitle psikolojisi uzmanısın.
@@ -92,6 +124,8 @@ Amacın: TikTok, Instagram Reels ve YouTube Shorts'ta ilk 2 saniyede izleyiciyi 
 
 # 4 Aşamalı Viral Kurgu Formülü:
 1. HOOK (0 - 3 sn): Bilişsel çelişki yaratan, ezber bozan ilk cümle. Selamlama asla yok, direkt şok.
+   Yasak kalıplar: "Kimse sana söylemez…", "Nobody tells you…", "The elite secretly…".
+   2–3 FARKLI merak kancası üret (hook_alternatives); script'i en güçlüsüyle aç.
 2. BUILD-UP / TENSION (3 - 15 sn): Gizemli mekanizma, kısa ve vurucu cümleler, nefessiz tempo.
 3. VALUE / PLOT TWIST (15 - 22 sn): Olayın arkasındaki gerçek dünya kuralı ve güç dinamiği ifşası.
 4. RETENTION LOOP / CTA (22 - 25 sn): İzleyiciyi yorumlarda tartışmaya iten veya başa saran döngüsel bitiş.
@@ -100,14 +134,25 @@ Amacın: TikTok, Instagram Reels ve YouTube Shorts'ta ilk 2 saniyede izleyiciyi 
 
 SADECE şu anahtarlara sahip geçerli bir JSON nesnesi döndür:
 {{
-  "script": "50-60 kelimelik 4 aşamalı sesli anlatım metni",
+  "hook_alternatives": ["2-3 farklı merak kancası (7-14 kelime), aynı kalıp açılış yok"],
+  "script": "50-60 kelimelik 4 aşamalı sesli anlatım; hook_alternatives'tan seçilen kanca ile başlamalı",
   "title": "48 karakterden kısa merak uyandırıcı başlık",
   "description": "1 cümlelik merak uyandıran açıklama + 3 hashtag",
   "pinned_comment": "yorumlarda tartışma çıkaracak 18 kelimeden kısa soru",
   "tags": ["5-7", "hedef", "etiket"],
-  "visual_prompts": ["8-12 adet sinematik dikey görsel promptu"],
-  "visual_keywords": ["5", "ingilizce", "arama", "kelimesi"]
-}}"""
+  "visual_prompts": ["8-12 sinematik dikey prompt; konuya özgü somut nesne/mekan (Rolex, İsviçre kasası vb.) — genel 'lüks yaşam' yasak; Dark Wealth / old-money"],
+  "visual_keywords": ["5 konuya özgü İngilizce arama terimi, generic wealth/luxury değil"],
+  "concrete_nouns": ["4-8 somut isim / özel isim (Rolex, kasa, Cenevre vb.) Flux promptları için"],
+  "scene_stock_queries": [
+    {{
+      "query": "o cümleye nokta atışı İngilizce stok arama terimleri (örn. swiss bank vault legal documents / watchmaker loupe gears)",
+      "mode": "watchmaking|finance_docs|vault|chart|boardroom|generic"
+    }}
+  ]
+}}
+
+# scene_stock_queries: her cümle için 1 obje; inşaat/sokak/kalabalık B-roll yasak; finans→chart/belge, saat→ustalık/mekanizma.
+"""
 
 _TEMPLATES = {"en": PROMPT_TEMPLATE, "tr": PROMPT_TEMPLATE_TR}
 
@@ -137,13 +182,23 @@ def generate_script(
                 "content": (
                     "Your previous reply was not valid JSON. "
                     "Return ONLY a single valid JSON object with keys "
-                    "script, title, description, pinned_comment, tags, "
-                    "visual_prompts, visual_keywords. No markdown."
+                    "hook_alternatives, script, title, description, pinned_comment, tags, "
+                    "visual_prompts, visual_keywords, concrete_nouns, scene_stock_queries. No markdown."
                 ),
             }
         ]
         content, used_model = _call_llm_with_fallback(strict_messages, api_key)
         data = _parse(content)
+    # Re-normalize with topic so Rolex/Swiss anchors land in derived queries.
+    from app.stock_media import normalize_scene_stock_queries
+
+    data["scene_stock_queries"] = normalize_scene_stock_queries(
+        data.get("scene_stock_queries"),
+        script=data.get("script") or "",
+        topic=topic,
+        visual_prompts=data.get("visual_prompts") or [],
+        visual_keywords=data.get("visual_keywords") or [],
+    )
     logger.info("script_gen model used: %s", used_model)
 
     # Emniyet kemeri: model sınırı aştıysa bir kez kısaltma iste.
@@ -172,16 +227,96 @@ def generate_script(
         except Exception as exc:
             logger.warning("Senaryo kısaltma adımında hata (orijinal korunuyor): %s", exc)
 
+    data["scene_stock_queries"] = normalize_scene_stock_queries(
+        data.get("scene_stock_queries"),
+        script=data.get("script") or "",
+        topic=topic,
+        visual_prompts=data.get("visual_prompts") or [],
+        visual_keywords=data.get("visual_keywords") or [],
+    )
+    _apply_hook_alternatives(data)
     _validate_script_shape(data)
     return data
 
 
+def _is_banned_hook(text: str) -> bool:
+    lower = (text or "").strip().lower()
+    return any(lower.startswith(prefix) for prefix in BANNED_HOOK_PREFIXES)
+
+
+def _normalize_hook_list(raw: object) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    out: list[str] = []
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        text = item.strip()
+        if not text or _is_banned_hook(text):
+            continue
+        if text.lower() not in {o.lower() for o in out}:
+            out.append(text)
+    return out[:3]
+
+
+def _script_opening(script: str) -> str:
+    if not script:
+        return ""
+    return re.split(r"(?<=[.!?])\s+", script.strip(), maxsplit=1)[0].strip()
+
+
+def _apply_hook_alternatives(data: dict) -> None:
+    """Ensure 2–3 curiosity hooks; pick one; rewrite banned openings; keep A/B meta."""
+    from app.analytics_memory import pick_hook_alternative
+
+    alts = _normalize_hook_list(data.get("hook_alternatives"))
+    script = (data.get("script") or "").strip()
+    opening = _script_opening(script)
+
+    if opening and not _is_banned_hook(opening):
+        if opening.lower() not in {a.lower() for a in alts}:
+            alts.insert(0, opening)
+            alts = alts[:3]
+
+    if len(alts) < 2:
+        title = (data.get("title") or "").strip()
+        if title and title.lower() not in {a.lower() for a in alts}:
+            candidate = title if title.endswith("?") else f"Why {title} still owns the room."
+            if not _is_banned_hook(candidate):
+                alts.append(candidate)
+        nouns = [
+            n.strip()
+            for n in (data.get("concrete_nouns") or [])
+            if isinstance(n, str) and n.strip()
+        ]
+        if nouns and len(alts) < 2:
+            alts.append(
+                f"Everyone thinks they know {nouns[0]}. The ownership chart says otherwise."
+            )
+        alts = _normalize_hook_list(alts) or [a for a in alts if a][:3]
+
+    chosen = pick_hook_alternative(alts) or (alts[0] if alts else opening)
+
+    if chosen and script and _is_banned_hook(opening):
+        rest = script[len(opening) :].lstrip(" .") if opening else script
+        data["script"] = f"{chosen} {rest}".strip()
+
+    data["hook_alternatives"] = alts[:3] if alts else ([chosen] if chosen else [])
+    data["hook_selected"] = chosen or (
+        data["hook_alternatives"][0] if data["hook_alternatives"] else ""
+    )
+
+
 def _call_llm_with_fallback(messages: list[dict], api_key: str) -> tuple[str, str]:
-    """Try each model in the waterfall; raise the last error if all fail."""
+    """Try each model in the waterfall; auth/billing hard-fails immediately."""
+    from app.errors import FalAuthBillingError
+
     last_exc: Exception | None = None
     for model in _model_waterfall():
         try:
             return _call_llm(messages, api_key, model=model), model
+        except FalAuthBillingError:
+            raise
         except Exception as exc:
             last_exc = exc
             logger.warning("LLM model %s failed: %s", model, exc)
@@ -190,6 +325,9 @@ def _call_llm_with_fallback(messages: list[dict], api_key: str) -> tuple[str, st
 
 
 def _call_llm(messages: list[dict], api_key: str, model: str | None = None) -> str:
+    import requests
+    from app.errors import FalAuthBillingError
+
     response = session.post(
         OPENROUTER_URL,
         headers={
@@ -199,6 +337,32 @@ def _call_llm(messages: list[dict], api_key: str, model: str | None = None) -> s
         json={"model": model or MODEL, "messages": messages},
         timeout=60,
     )
+    # LLM 401/402/403 / billing → hard-fail (no silent junk script → stock video).
+    status = getattr(response, "status_code", None)
+    raw_text = getattr(response, "text", None)
+    body = raw_text[:400] if isinstance(raw_text, str) else ""
+    if isinstance(status, int) and status in (401, 402, 403):
+        raise FalAuthBillingError(
+            f"LLM auth/billing: HTTP {status}",
+            status_code=status,
+            detail=body,
+        )
+    if body and any(
+        m in body.lower()
+        for m in (
+            "insufficient credits",
+            "payment required",
+            "user is locked",
+            "exhausted balance",
+            "invalid api key",
+            "unauthorized",
+        )
+    ):
+        raise FalAuthBillingError(
+            f"LLM auth/billing: HTTP {status}",
+            status_code=status if isinstance(status, int) else None,
+            detail=body,
+        )
     response.raise_for_status()
     return response.json()["choices"][0]["message"]["content"]
 
@@ -254,14 +418,52 @@ def _parse(content: str) -> dict:
             m_prompts = re.search(r'"visual_prompts"\s*:\s*\[(.*?)\]', cleaned, re.DOTALL)
             if m_prompts:
                 data["visual_prompts"] = [p.strip().strip('"\'') for p in re.findall(r'"((?:\\.|[^"\\])*)"', m_prompts.group(1)) if p.strip()]
+            m_nouns = re.search(r'"concrete_nouns"\s*:\s*\[(.*?)\]', cleaned, re.DOTALL)
+            if m_nouns:
+                data["concrete_nouns"] = [
+                    t.strip().strip("\"'")
+                    for t in re.findall(r'"((?:\\.|[^"\\])*)"', m_nouns.group(1))
+                    if t.strip()
+                ]
+            m_hooks = re.search(r'"hook_alternatives"\s*:\s*\[(.*?)\]', cleaned, re.DOTALL)
+            if m_hooks:
+                data["hook_alternatives"] = [
+                    t.strip().strip("\"'")
+                    for t in re.findall(r'"((?:\\.|[^"\\])*)"', m_hooks.group(1))
+                    if t.strip()
+                ]
 
             if not data.get("script") or not data.get("title"):
                 raise ValueError(f"Model returned invalid JSON: {content!r}") from exc
 
-    # visual_keywords kasten zorunlu tutulmuyor: model bazen bu isteğe bağlı
-    # alanı atlayabilir; pipeline.py o durumda script'ten anahtar kelime
-    # çıkarmaya (extract_keywords) düşüyor — bir günün tamamını bu yüzden
-    # kaybetmeye değmez.
+    # visual_keywords / concrete_nouns / scene_stock_queries optional — derive if missing.
+    if "concrete_nouns" in data and not isinstance(data["concrete_nouns"], list):
+        data["concrete_nouns"] = []
+    if not data.get("concrete_nouns"):
+        # Derive from topic-ish fields so Flux prompts stay anchored.
+        from app.stock_media import prompt_concrete_terms
+
+        derived: list[str] = []
+        for src in (
+            " ".join(data.get("visual_prompts") or []),
+            data.get("title") or "",
+            data.get("script") or "",
+        ):
+            for term in prompt_concrete_terms(src, max_terms=4):
+                if term.lower() not in {d.lower() for d in derived}:
+                    derived.append(term)
+        data["concrete_nouns"] = derived[:8]
+
+    from app.stock_media import normalize_scene_stock_queries
+
+    data["scene_stock_queries"] = normalize_scene_stock_queries(
+        data.get("scene_stock_queries"),
+        script=data.get("script") or "",
+        topic="",  # filled by caller if needed; derive from script alone here
+        visual_prompts=data.get("visual_prompts") or [],
+        visual_keywords=data.get("visual_keywords") or [],
+    )
+
     for key in REQUIRED_KEYS:
         if key not in data:
             raise ValueError(f"Model response missing required key '{key}': {data!r}")

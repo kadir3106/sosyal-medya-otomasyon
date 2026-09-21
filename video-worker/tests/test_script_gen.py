@@ -26,7 +26,9 @@ def test_generate_script_parses_valid_json_response(mock_post):
 
     result = generate_script("Why flamingos stand on one leg", api_key="fake-key")
 
-    assert result == payload
+    for key, value in payload.items():
+        assert result[key] == value
+    assert isinstance(result.get("concrete_nouns"), list)
     called_kwargs = mock_post.call_args.kwargs
     assert called_kwargs["headers"]["Authorization"] == "Bearer fake-key"
     # Çalışma anında çözümlenen model (env varsa o, yoksa DEFAULT_MODEL) gönderilmeli
@@ -41,7 +43,9 @@ def test_generate_script_strips_markdown_fences(mock_post):
 
     result = generate_script("Some topic", api_key="fake-key")
 
-    assert result == payload
+    for key, value in payload.items():
+        assert result[key] == value
+    assert isinstance(result.get("concrete_nouns"), list)
 
 
 @patch("app.script_gen.session.post")
@@ -109,7 +113,7 @@ def test_default_model_is_pinned_when_env_unset(monkeypatch):
     importlib.reload(config_module)
     sg = importlib.reload(script_gen_module)
 
-    assert sg.DEFAULT_MODEL == "google/gemma-4-31b-it:free"
+    assert sg.DEFAULT_MODEL == "gemini-flash"
     assert sg.MODEL == sg.DEFAULT_MODEL
 
 
@@ -136,7 +140,8 @@ def test_generate_script_falls_back_to_secondary_model(mock_post, monkeypatch):
 
     result = sg.generate_script("Some topic", api_key="fake-key")
 
-    assert result == payload
+    for key, value in payload.items():
+        assert result[key] == value
     assert mock_post.call_count == 2
     assert mock_post.call_args_list[0].kwargs["json"]["model"] == "primary/model"
     assert mock_post.call_args_list[1].kwargs["json"]["model"] == "secondary/model"
@@ -158,6 +163,64 @@ def test_generate_script_retries_strict_json_after_parse_failure(mock_post, monk
 
     result = sg.generate_script("Some topic", api_key="fake-key")
 
-    assert result == payload
+    for key, value in payload.items():
+        assert result[key] == value
     assert mock_post.call_count == 2
     assert "valid JSON" in mock_post.call_args_list[1].kwargs["json"]["messages"][-1]["content"]
+    assert "concrete_nouns" in mock_post.call_args_list[1].kwargs["json"]["messages"][-1]["content"]
+    assert "hook_alternatives" in mock_post.call_args_list[1].kwargs["json"]["messages"][-1]["content"]
+
+
+@patch("app.script_gen.session.post")
+def test_generate_script_stores_hook_alternatives_and_picks_one(mock_post):
+    payload = {
+        "script": "Rolex has no shareholders. A private Swiss trust owns every crown. That is the real power play. Would you still flex a watch you cannot own?",
+        "title": "Who Owns Rolex?",
+        "description": "Zero public shares. #DarkWealth #Rolex #Trust",
+        "tags": ["rolex", "wealth", "trust"],
+        "hook_alternatives": [
+            "Rolex has no shareholders.",
+            "A Swiss trust owns every crown.",
+            "You cannot buy the company behind the watch.",
+        ],
+        "concrete_nouns": ["Rolex", "Swiss trust", "crown", "Geneva"],
+    }
+    mock_post.return_value = _mock_response(json.dumps(payload))
+
+    result = generate_script(
+        "The Rolex Foundation Secret: How Rolex is owned 100% by a private Swiss trust",
+        api_key="fake-key",
+    )
+
+    assert len(result["hook_alternatives"]) >= 2
+    assert result["hook_selected"] in result["hook_alternatives"]
+    assert not result["hook_selected"].lower().startswith("nobody tells you")
+    prompt = mock_post.call_args.kwargs["json"]["messages"][0]["content"]
+    assert "hook_alternatives" in prompt
+    assert "Nobody tells you" in prompt  # forbidden list present in instructions
+
+
+@patch("app.script_gen.session.post")
+def test_generate_script_rewrites_banned_nobody_tells_you_opener(mock_post):
+    payload = {
+        "script": "Nobody tells you this about Rolex. A private Swiss trust owns every share. The crown is a gate, not a product. Ask yourself who really owns status.",
+        "title": "Rolex Trust Gate",
+        "description": "Private trust. #Rolex",
+        "tags": ["rolex"],
+        "hook_alternatives": [
+            "Nobody tells you this about Rolex.",
+            "A private Swiss trust owns every Rolex share.",
+            "The crown is a gate, not a product.",
+        ],
+        "concrete_nouns": ["Rolex", "Swiss trust", "crown"],
+    }
+    mock_post.return_value = _mock_response(json.dumps(payload))
+
+    result = generate_script("Rolex Foundation Secret", api_key="fake-key")
+
+    assert not result["script"].lower().startswith("nobody tells you")
+    assert result["hook_selected"]
+    assert not result["hook_selected"].lower().startswith("nobody tells you")
+    assert all(
+        not h.lower().startswith("nobody tells you") for h in result["hook_alternatives"]
+    )
