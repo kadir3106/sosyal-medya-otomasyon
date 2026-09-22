@@ -83,6 +83,11 @@ _MODE_QUERY_SEEDS: dict[str, tuple[str, ...]] = {
         "executive meeting glass office",
         "empty luxury boardroom interior",
     ),
+    "diamond": (
+        "diamond engagement ring price tag",
+        "loose rough diamond vs polished gem",
+        "diamond vault security trays",
+    ),
 }
 
 _MODE_TRIGGERS: dict[str, tuple[str, ...]] = {
@@ -100,6 +105,10 @@ _MODE_TRIGGERS: dict[str, tuple[str, ...]] = {
         "ticker", "ipo", "dividend",
     ),
     "boardroom": ("board", "boardroom", "director", "executive", "meeting", "office"),
+    "diamond": (
+        "diamond", "debeers", "de beers", "engagement", "ring", "gem", "cartel",
+        "kimberley", "brilliant", "carat",
+    ),
 }
 
 # Reject B-roll whose URL/title smells like unrelated stock when we need craft/finance.
@@ -112,7 +121,43 @@ _IRRELEVANT_SLUG_TOKENS = frozenset({
 })
 
 _MIN_VIDEO_LONG_EDGE = 720
-_VALID_MODES = frozenset(_MODE_QUERY_SEEDS.keys()) | {"generic"}
+_VALID_MODES = frozenset(_MODE_QUERY_SEEDS.keys()) | {"generic", "diamond"}
+
+# Particles that look like stopwords but belong in brand names (De Beers, Van Cleef).
+_NAME_PARTICLES = frozenset({
+    "de", "van", "von", "la", "le", "di", "da", "del", "der", "du", "st", "mc", "mac",
+})
+_TITLE_NOISE = frozenset({
+    "the", "how", "why", "what", "when", "where", "who", "a", "an", "and", "or",
+    "for", "with", "from", "into", "that", "this", "these", "those",
+})
+_PARTICLE_BRAND_RE = re.compile(
+    r"\b((?:De|Van|Von|La|Le|Di|Del|Du|Mc|Mac|St)\s+[A-Z][A-Za-z]+)\b"
+)
+_CAP_WORD_RE = re.compile(r"\b([A-Z][A-Za-z]{2,})\b")
+
+
+def extract_proper_phrases(text: str) -> list[str]:
+    """Keep multi-word brands intact (De Beers, Hans Wilsdorf, Van Cleef)."""
+    if not text:
+        return []
+    found: list[str] = []
+    # Particle brands first so "The De Beers" never becomes "The De".
+    for match in _PARTICLE_BRAND_RE.finditer(text):
+        phrase = match.group(1).strip()
+        if phrase.lower() not in {f.lower() for f in found}:
+            found.append(phrase)
+    for match in _CAP_WORD_RE.finditer(text):
+        word = match.group(1).strip()
+        low = word.lower()
+        if low in _TITLE_NOISE or low in _STOPWORDS or low in _GENERIC_STOCK_TERMS:
+            continue
+        # Skip second half of an already-captured brand ("Beers" after "De Beers")
+        if any(low == f.lower().split()[-1] and len(f.split()) > 1 for f in found):
+            continue
+        if low not in {f.lower() for f in found}:
+            found.append(word)
+    return found
 
 
 def extract_keywords(script: str, max_keywords: int = 5) -> list[str]:
@@ -130,38 +175,75 @@ def extract_keywords(script: str, max_keywords: int = 5) -> list[str]:
 
 
 def topic_anchor_terms(topic: str, max_terms: int = 4) -> list[str]:
-    """Concrete nouns/proper names from the topic (e.g. Rolex, Swiss, trust)."""
+    """Concrete nouns/proper names from the topic (e.g. De Beers, Rolex, Swiss)."""
     if not topic:
         return []
+    anchors: list[str] = []
+    # Brands first — never split "De Beers" into stopword "de" + "Beers".
+    for phrase in extract_proper_phrases(topic):
+        if phrase.lower() not in {a.lower() for a in anchors}:
+            anchors.append(phrase)
+        if len(anchors) >= max_terms:
+            return anchors[:max_terms]
+
     words = re.findall(r"[A-Za-z\u00C0-\u024F]+", topic)
-    anchors = []
-    for word in words:
+    i = 0
+    while i < len(words) and len(anchors) < max_terms:
+        word = words[i]
         lower = word.lower()
-        if lower in _STOPWORDS or lower in _GENERIC_STOCK_TERMS:
+        # Particle + Capital → keep as one brand token
+        if (
+            lower in _NAME_PARTICLES
+            and i + 1 < len(words)
+            and words[i + 1][:1].isupper()
+        ):
+            brand = f"{word} {words[i + 1]}"
+            if brand.lower() not in {a.lower() for a in anchors}:
+                anchors.append(brand)
+            i += 2
+            continue
+        if lower in _STOPWORDS or lower in _GENERIC_STOCK_TERMS or lower in _TITLE_NOISE:
+            i += 1
             continue
         if len(lower) < 3 and not word[:1].isupper():
+            i += 1
             continue
-        if lower not in anchors:
-            anchors.append(lower if word.islower() else word)
-        if len(anchors) >= max_terms:
-            break
-    return anchors
+        # Skip second half of an already-captured brand ("Beers" after "De Beers")
+        covered = any(
+            lower == a.lower().split()[-1] and len(a.split()) > 1 for a in anchors
+        )
+        if covered:
+            i += 1
+            continue
+        token = lower if word.islower() else word
+        if token.lower() not in {a.lower() for a in anchors}:
+            anchors.append(token)
+        i += 1
+    return anchors[:max_terms]
 
 
 def prompt_concrete_terms(prompt: str, max_terms: int = 3) -> list[str]:
     """Strip cinematic fluff; keep subject nouns for Pexels search."""
     if not prompt:
         return []
+    # Prefer intact brands inside the prompt.
+    kept: list[str] = []
+    for phrase in extract_proper_phrases(prompt):
+        if phrase.lower() not in {k.lower() for k in kept}:
+            kept.append(phrase)
+        if len(kept) >= max_terms:
+            return kept
     words = [
         w.strip(".,:;'\"()-")
         for w in prompt.replace(",", " ").split()
     ]
-    kept = []
     for word in words:
         lower = word.lower()
         if len(lower) < 4 or lower in _PROMPT_NOISE or lower in _STOPWORDS:
             continue
-        if lower not in kept:
+        if any(lower == k.lower().split()[-1] and len(k.split()) > 1 for k in kept):
+            continue
+        if lower not in {k.lower() for k in kept}:
             kept.append(lower)
         if len(kept) >= max_terms:
             break
@@ -185,52 +267,149 @@ def _split_script_sentences(script: str) -> list[str]:
     return [p.strip() for p in parts if p.strip()]
 
 
-def _clean_query_phrase(raw: str) -> str:
-    """Collapse commas/slashes; drop generic fluff tokens."""
+def _clean_query_phrase(raw: str, topic: str = "") -> str:
+    """Collapse commas/slashes; drop fluff; keep brand phrases (De Beers)."""
     if not raw:
         return ""
+    # Protect known brands from the topic + raw text before token filtering.
+    protected: list[str] = []
+    for phrase in extract_proper_phrases(f"{topic} {raw}"):
+        if phrase.lower() not in {p.lower() for p in protected}:
+            protected.append(phrase)
+
     text = raw.replace(",", " ").replace("/", " ").replace("|", " ")
-    words = []
-    for w in text.split():
-        token = w.strip(".,:;'\"()-")
+    # Soft-normalize "de beers" → use protected casing when topic has De Beers
+    low_text = text.lower()
+    for phrase in protected:
+        if phrase.lower() in low_text:
+            # Mark as already included via protected list
+            pass
+
+    words: list[str] = []
+    tokens = [w.strip(".,:;'\"()-") for w in text.split()]
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
         if not token:
+            i += 1
             continue
         low = token.lower()
+        # Particle + next capital/name → keep as brand
+        if (
+            low in _NAME_PARTICLES
+            and i + 1 < len(tokens)
+            and tokens[i + 1]
+            and (tokens[i + 1][:1].isupper() or tokens[i + 1].lower() == "beers")
+        ):
+            brand = f"{token} {tokens[i + 1]}"
+            # Prefer canonical casing from protected list
+            for p in protected:
+                if p.lower() == brand.lower():
+                    brand = p
+                    break
+            if brand.lower() not in {w.lower() for w in words}:
+                words.append(brand)
+            i += 2
+            continue
         if low in _STOPWORDS or low in _GENERIC_STOCK_TERMS:
+            i += 1
             continue
         if len(low) < 3 and not token[:1].isupper():
+            i += 1
             continue
+        # Skip orphan second half of a protected brand already present
+        if any(low == p.lower().split()[-1] and len(p.split()) > 1 for p in words + protected):
+            # Only skip if the full brand is already in words
+            if any(len(w.split()) > 1 and w.lower().endswith(low) for w in words):
+                i += 1
+                continue
+            # Or if we'll inject protected brand later
+            if any(p.lower().endswith(low) and len(p.split()) > 1 for p in protected):
+                i += 1
+                continue
         if low not in {x.lower() for x in words}:
             words.append(token)
+        i += 1
+
+    # Ensure at least one protected brand from topic survives
+    for p in protected:
+        if p.lower() not in {w.lower() for w in words}:
+            # Only inject if brand appears in raw or topic-related
+            if p.lower() in low_text or p.lower() in (topic or "").lower():
+                words.insert(0, p)
+                break
+
     return " ".join(words[:8]).strip()
 
 
 def enrich_stock_query(query: str, topic: str = "", mode: str = "generic") -> str:
     """Ensure query has concrete nouns; inject domain seeds when thin/generic."""
     mode = mode if mode in _VALID_MODES else detect_visual_mode(f"{query} {topic}")
-    cleaned = _clean_query_phrase(query)
+    cleaned = _clean_query_phrase(query, topic=topic)
     anchors = topic_anchor_terms(topic, max_terms=2)
 
     parts: list[str] = []
-    if cleaned:
-        parts.extend(cleaned.split())
-    # Keep one topic anchor if missing (Rolex topic → always say Rolex somewhere).
+    # Prefer full brand anchors first (De Beers before diamond…).
     for a in anchors:
         if a.lower() not in {p.lower() for p in parts}:
-            parts.insert(0, a)
-            break
+            parts.append(a)
+
+    if cleaned:
+        remaining = cleaned
+        for a in anchors:
+            remaining = re.sub(re.escape(a), " ", remaining, count=1, flags=re.IGNORECASE)
+        for w in remaining.split():
+            # Drop orphan "Beers" if "De Beers" already present
+            if any(
+                len(p.split()) > 1 and w.lower() == p.lower().split()[-1]
+                for p in parts
+            ):
+                continue
+            if w.lower() not in {p.lower() for p in parts}:
+                parts.append(w)
 
     meaningful = [p for p in parts if p.lower() not in _GENERIC_STOCK_TERMS]
     if len(meaningful) < 3 and mode in _MODE_QUERY_SEEDS:
-        seed = _MODE_QUERY_SEEDS[mode][hash(cleaned or topic or mode) % len(_MODE_QUERY_SEEDS[mode])]
+        seed = _MODE_QUERY_SEEDS[mode][
+            hash(cleaned or topic or mode) % len(_MODE_QUERY_SEEDS[mode])
+        ]
         for w in seed.split():
             if w.lower() not in {p.lower() for p in parts}:
                 parts.append(w)
 
-    out = " ".join(parts[:7]).strip()
+    out = " ".join(parts[:8]).strip()
+    out = re.sub(r"\b(De Beers)\s+Beers\b", r"\1", out, flags=re.IGNORECASE)
+    # Drop orphan Beers / Cleef when full brand already present
+    for brand in ("De Beers", "Van Cleef"):
+        if brand.lower() in out.lower():
+            tail = brand.split()[-1]
+            out = re.sub(
+                rf"(?<!{re.escape(brand.split()[0].lower())} )\b{re.escape(tail)}\b",
+                "",
+                out,
+                flags=re.IGNORECASE,
+            )
+            # safer explicit cleanup:
+            out = re.sub(rf"\b{re.escape(brand)}\b(?:\s+{re.escape(tail)})+", brand, out, flags=re.IGNORECASE)
+            out = re.sub(rf"\b{re.escape(brand)}\b", brand, out, flags=re.IGNORECASE)
+            # remove leftover lone tail tokens not preceded by particle
+            parts2 = []
+            toks = out.split()
+            i = 0
+            while i < len(toks):
+                if (
+                    toks[i].lower() == tail.lower()
+                    and (i == 0 or toks[i - 1].lower() != brand.split()[0].lower())
+                ):
+                    i += 1
+                    continue
+                parts2.append(toks[i])
+                i += 1
+            out = " ".join(parts2)
+    out = re.sub(r"\s+", " ", out).strip()
     if not out or out.lower() in _GENERIC_STOCK_TERMS:
         seed = _MODE_QUERY_SEEDS.get(mode, ("swiss watch craftsmanship",))[0]
-        out = _clean_query_phrase(f"{' '.join(anchors)} {seed}".strip()) or seed
+        out = _clean_query_phrase(f"{' '.join(anchors)} {seed}".strip(), topic=topic) or seed
     return out
 
 

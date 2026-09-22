@@ -1,4 +1,5 @@
 from unittest.mock import patch, Mock
+import re
 
 from app.stock_media import (
     extract_keywords,
@@ -237,6 +238,25 @@ def test_search_portrait_video_allows_used_id_reuse_when_opted_in(mock_get):
     assert reused is True
 
 
+def test_topic_anchor_keeps_de_beers_intact():
+    from app.stock_media import topic_anchor_terms, enrich_stock_query
+
+    anchors = topic_anchor_terms(
+        "The De Beers Diamond Scam: How an advertising cartel convinced the world"
+    )
+    assert any(a.lower() == "de beers" for a in anchors)
+    assert "Beers" not in anchors  # orphan second half alone is wrong
+
+    q = enrich_stock_query(
+        "Beers diamond ring jewelry",
+        topic="The De Beers Diamond Scam",
+        mode="diamond",
+    )
+    low = q.lower()
+    assert "de beers" in low
+    assert not re.search(r"(?<!de )\bbeers\b", low)
+
+
 def test_build_scene_search_query_anchors_to_topic_not_generic_wealth():
     from app.stock_media import build_scene_search_query
 
@@ -250,6 +270,21 @@ def test_build_scene_search_query_anchors_to_topic_not_generic_wealth():
     assert "rolex" in low or "swiss" in low
     assert low != "luxury business"
     assert "luxury lifestyle" not in low
+
+
+def test_resolve_de_beers_scene_not_orphan_beers():
+    from app.stock_media import resolve_scene_queries
+
+    queries = resolve_scene_queries(
+        scene_count=1,
+        topic="The De Beers Diamond Scam: How an advertising cartel...",
+        script="Your engagement ring is worth zero after you leave the store.",
+        scene_stock_queries=[
+            {"query": "engagement ring price tag jewelry counter", "mode": "diamond"}
+        ],
+    )
+    assert "de beers" in queries[0].lower() or "engagement" in queries[0].lower()
+    assert not re.search(r"(?<!de )\bbeers\b", queries[0].lower())
 
 
 def test_build_scene_search_query_prefers_rich_scene_query():
@@ -307,10 +342,14 @@ def test_build_scene_search_query_rotates_topic_anchors_across_scenes():
     from app.stock_media import build_scene_search_query
 
     topic = "Rolex Swiss vault Geneva"
-    q0 = build_scene_search_query(topic, scene_index=0)
-    q1 = build_scene_search_query(topic, scene_index=1)
-    # Different lead term reduces identical page-1 Pexels hits.
-    assert q0.split()[0].lower() != q1.split()[0].lower() or q0 != q1
+    q0 = build_scene_search_query(
+        topic, prompt="swiss vault steel door", scene_index=0, mode="vault"
+    )
+    q1 = build_scene_search_query(
+        topic, prompt="geneva watchmaker bench tools", scene_index=1, mode="watchmaking"
+    )
+    # Different scene prompts must not collapse to the identical query string.
+    assert q0 != q1
 
 
 @patch("app.stock_media.session.get")

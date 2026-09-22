@@ -96,21 +96,22 @@ Return ONLY a valid JSON object with these exact keys, no markdown fences:
   "concrete_nouns": ["4-8 concrete nouns/proper names from the topic for Flux prompts, e.g. Rolex, crown, vault, Geneva"],
   "scene_stock_queries": [
     {{
-      "query": "3-6 SPECIFIC English stock-search nouns for that sentence (e.g. 'swiss bank vault legal contract papers corporate trust' OR 'luxury watchmaker magnifying glass gear mechanism close-up') — NEVER generic 'luxury business city street construction'",
-      "mode": "watchmaking|finance_docs|vault|chart|boardroom|generic"
+      "query": "ONE concrete searchable visual (3-6 English nouns). Prefer a single object people recognize instantly — e.g. 'engagement ring price tag jewelry counter' NOT 'diamond luxury lifestyle'. Keep full brand names (De Beers, Rolex).",
+      "mode": "watchmaking|finance_docs|vault|chart|boardroom|diamond|generic"
     }}
   ]
 }}
 
 # scene_stock_queries RULES (critical for B-roll match):
 - One object per script sentence (same order as narration). Length = number of sentences (typically 4-8).
-- query MUST mirror THAT sentence's meaning, not the whole topic.
-  * "tax-free Swiss trust" → "swiss bank vault, legal documents, corporate trust papers"
-  * "watchmaker / Rolex craft" → "luxury watch making, watchmaker loupe, mechanical watch gears"
-  * "shareholders / stocks" → "stock market chart screen, trading floor monitors, equity graph"
-  * "foundation / ownership papers" → "signing legal contract, notary stamp, corporate documents desk"
-- mode picks the visual family so search can prioritize charts/docs vs craft footage.
-- Ban irrelevant B-roll: construction sites, random streets, crowds, gyms, food, beaches.
+- EACH query = ONE visual promise (what the eye should see in 1 second).
+  * "tax-free Swiss trust" → "swiss bank vault legal contract papers"
+  * "watchmaker / Rolex craft" → "watchmaker loupe mechanical watch gears"
+  * "engagement ring worthless" → "diamond engagement ring price tag close-up"
+  * "De Beers cartel / scarcity" → "De Beers diamond vault trays inventory"
+  * "shareholders / stocks" → "stock market chart trading monitor"
+- NEVER strip brand particles: write "De Beers" not "Beers".
+- Ban irrelevant B-roll: construction, random streets, crowds, gyms, food, beaches, romantic couple filler.
 """
 
 PROMPT_TEMPLATE_TR = """# Rol ve Kimlik
