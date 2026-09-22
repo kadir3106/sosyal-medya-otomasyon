@@ -273,16 +273,18 @@ def _generate_video_sync(job_id: str, topic: str | None = None) -> dict:
             seconds=round(time.monotonic() - stage_started, 1),
         )
 
-        # TikTok / Reels tarzı dinamik kelime vurgulamalı altyazı
+        # TikTok / Reels tarzı dinamik kelime vurgulamalı altyazı + ilk 2.5 sn hook kartı
+        hook_text = script_data.get("hook_selected") or _extract_hook(script_data["script"])
         subtitle_path = write_ass(
             word_boundaries,
             str(work_dir / "subs.ass"),
             words_per_cue=2,
             highlight=True,
             add_emojis=getattr(config, "ENABLE_SUBTITLE_EMOJIS", False) is True,
+            hook_text=hook_text,
+            hook_seconds=2.5,
         )
 
-        hook_text = script_data.get("hook_selected") or _extract_hook(script_data["script"])
         # Kalite telemetrisi (hook / TTS / motor) — Telegram + pending.json.
         quality: dict = {
             "hook": hook_text,

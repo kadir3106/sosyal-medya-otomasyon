@@ -79,3 +79,20 @@ def test_write_ass_with_karaoke_highlight(tmp_path):
     # Emojiler entegre edilmiş olmalı (para -> 💰)
     assert "💰" in content
 
+
+def test_write_ass_hook_overlay_on_first_seconds(tmp_path):
+    boundaries = [
+        {"offset": 0, "duration": 10_000_000, "text": "Hello"},
+    ]
+    output_path = tmp_path / "subs.ass"
+    write_ass(
+        boundaries,
+        str(output_path),
+        hook_text="Your engagement ring is worth zero dollars",
+        hook_seconds=2.5,
+    )
+    content = output_path.read_text(encoding="utf-8")
+    assert "Style: Hook," in content
+    assert "Dialogue: 1,0:00:00.00,0:00:02.50,Hook," in content
+    assert "engagement ring" in content.lower()
+

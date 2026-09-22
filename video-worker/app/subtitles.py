@@ -18,6 +18,7 @@ ScaledBorderAndShadow: yes
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Default,DejaVu Sans,90,&H00F8F9FA&,&H0000D7FF&,&H000D0D0D&,&H90000000,-1,0,0,0,100,100,1,0,1,6,3,2,60,60,480,1
+Style: Hook,DejaVu Sans,78,&H00F8F9FA&,&H0000D7FF&,&H000D0D0D&,&H90000000,-1,0,0,0,100,100,1.5,0,1,8,4,8,70,70,280,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -52,14 +53,26 @@ def write_ass(
     words_per_cue: int = 2,
     highlight: bool = False,
     add_emojis: bool = False,
+    hook_text: str | None = None,
+    hook_seconds: float = 2.5,
 ) -> str:
     """Kelime zamanlamalarından modern ASS altyazı üretir.
 
     highlight=True olduğunda konuşulan kelimeyi parlak sarı (&H0000FFFF) renkle
     öne çıkaran dinamik karaoke kurgusu üretir; highlight=False geriye dönük
     uyumluluk için düz 2 kelimelik grupları korur.
+
+    hook_text: ilk hook_seconds boyunca üstte büyük hook satırı (retention).
     """
     lines = [ASS_HEADER]
+    if hook_text and hook_text.strip():
+        # Soft wrap long hooks at ~42 chars for 9:16 readability.
+        wrapped = _wrap_hook_line(hook_text.strip(), max_len=42)
+        end_ticks = int(max(hook_seconds, 0.8) * TICKS_PER_SECOND)
+        lines.append(
+            f"Dialogue: 1,0:00:00.00,{_format_timestamp(end_ticks)},"
+            f"Hook,,0,0,0,,{wrapped}\n"
+        )
     if not word_boundaries:
         Path(output_path).write_text("".join(lines), encoding="utf-8")
         return output_path
@@ -118,6 +131,26 @@ def write_ass(
 def _escape_ass_text(text: str) -> str:
     # ASS metin alanında \, {, } özel anlam taşır
     return text.replace("\\", "\\\\").replace("{", "(").replace("}", ")")
+
+
+def _wrap_hook_line(text: str, max_len: int = 42) -> str:
+    """Soft-wrap hook for ASS (\\N). Escape ASS specials."""
+    words = text.split()
+    if not words:
+        return ""
+    lines: list[str] = []
+    current: list[str] = []
+    for w in words:
+        trial = (" ".join(current + [w])).strip()
+        if current and len(trial) > max_len:
+            lines.append(_escape_ass_text(" ".join(current)))
+            current = [w]
+        else:
+            current.append(w)
+    if current:
+        lines.append(_escape_ass_text(" ".join(current)))
+    # Max 3 lines on screen for the hook card
+    return "\\N".join(lines[:3])
 
 
 def _format_timestamp(ticks: int) -> str:
