@@ -330,6 +330,12 @@ def image_to_motion_clip(
             f"zoompan=z='if(lte(zoom,1.0),1.12,max(1.001,zoom-0.0008))':"
             f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={frames}:s=1080x1920:fps={fps}"
         )
+    elif motion_type == "punch_in":
+        # Faster push for attention beats without a new download.
+        vf_zoom = (
+            f"zoompan=z='min(zoom+0.0016,1.28)':"
+            f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={frames}:s=1080x1920:fps={fps}"
+        )
     else:  # zoom_in (default) and any unknown → soft zoom in
         vf_zoom = (
             f"zoompan=z='min(zoom+0.0008,1.12)':"

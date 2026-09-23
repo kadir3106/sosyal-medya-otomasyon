@@ -93,6 +93,8 @@ def test_write_ass_hook_overlay_on_first_seconds(tmp_path):
     )
     content = output_path.read_text(encoding="utf-8")
     assert "Style: Hook," in content
-    assert "Dialogue: 1,0:00:00.00,0:00:02.50,Hook," in content
+    # Phase 2.2: capped ≤1.8s with fade
+    assert ",Hook," in content
+    assert r"\fad(" in content
     assert "engagement ring" in content.lower()
 

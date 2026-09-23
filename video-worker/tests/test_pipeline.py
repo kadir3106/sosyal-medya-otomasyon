@@ -108,7 +108,8 @@ async def test_generate_video_plans_scenes_from_audio_duration(
             await generate_video("job_scenes")
 
     requested = mock_clips.call_args.kwargs["count"]
-    assert requested >= 14
+    # Stock path caps at STOCK_MAX_SCENES (8); still duration-driven within that cap.
+    assert 1 <= requested <= 8
     assert mock_render.call_args.kwargs["clip_duration"] == 2.2
     assert mock_render.call_args.kwargs["xfade_duration"] == 0.4
 

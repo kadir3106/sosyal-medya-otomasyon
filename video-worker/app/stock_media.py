@@ -118,6 +118,10 @@ _IRRELEVANT_SLUG_TOKENS = frozenset({
     "busy-street", "traffic-jam", "pedestrian-crowd", "shopping-mall",
     "gym", "workout", "beach", "surf", "cooking", "kitchen-food",
     "football", "soccer", "basketball", "party-crowd", "concert",
+    # Food / bakery — entity scenes must not accept these as "foundation" etc.
+    "bakery", "baker", "cookie", "cookies", "cake", "cakes", "pastry", "pastries",
+    "dessert", "cupcake", "doughnut", "donut", "bread", "baking", "icing", "dough",
+    "restaurant", "cafe", "food", "meal", "recipe", "pizza", "burger", "grocery",
 })
 
 _MIN_VIDEO_LONG_EDGE = 720
@@ -130,6 +134,8 @@ _NAME_PARTICLES = frozenset({
 _TITLE_NOISE = frozenset({
     "the", "how", "why", "what", "when", "where", "who", "a", "an", "and", "or",
     "for", "with", "from", "into", "that", "this", "these", "those",
+    "every", "each", "any", "some", "all", "no", "not",
+    "billion", "billions", "million", "millions", "amateurs", "elite",
 })
 _PARTICLE_BRAND_RE = re.compile(
     r"\b((?:De|Van|Von|La|Le|Di|Del|Du|Mc|Mac|St)\s+[A-Z][A-Za-z]+)\b"
@@ -138,26 +144,65 @@ _CAP_WORD_RE = re.compile(r"\b([A-Z][A-Za-z]{2,})\b")
 
 
 def extract_proper_phrases(text: str) -> list[str]:
-    """Keep multi-word brands intact (De Beers, Hans Wilsdorf, Van Cleef)."""
+    """Keep multi-word brands intact (De Beers, Hans Wilsdorf, Van Cleef).
+
+    Phase 2.1: merge consecutive Capitals; drop sentence-start/common non-entities
+    (Every, The, Billions, …). Prefer calling hygienize_entities for gate lists.
+    """
     if not text:
         return []
+    from app.director_gate import hygienize_entities, is_non_entity_token
+
     found: list[str] = []
-    # Particle brands first so "The De Beers" never becomes "The De".
+
+    def _add(phrase: str) -> None:
+        p = " ".join(phrase.split()).strip()
+        if not p:
+            return
+        if all(is_non_entity_token(w) for w in p.split()):
+            return
+        if p.lower() not in {f.lower() for f in found}:
+            found.append(p)
+
     for match in _PARTICLE_BRAND_RE.finditer(text):
-        phrase = match.group(1).strip()
-        if phrase.lower() not in {f.lower() for f in found}:
-            found.append(phrase)
-    for match in _CAP_WORD_RE.finditer(text):
-        word = match.group(1).strip()
+        _add(match.group(1))
+
+    # Linear scan: merge consecutive Capital tokens (Hans Wilsdorf Foundation).
+    # Avoid nested-quantifier regex (catastrophic backtracking on long scripts).
+    caps = list(_CAP_WORD_RE.finditer(text))
+    i = 0
+    while i < len(caps):
+        start_i = i
+        end_pos = caps[i].end()
+        j = i + 1
+        while j < len(caps):
+            gap = text[end_pos : caps[j].start()]
+            if gap.strip() == "" and len(gap) <= 3:
+                end_pos = caps[j].end()
+                j += 1
+                continue
+            # allow single name particle between Caps: "Van Cleef" already handled;
+            # "de" lowercase between Caps is rare in EN scripts — skip.
+            break
+        if j - start_i >= 2:
+            phrase = text[caps[start_i].start() : caps[j - 1].end()]
+            _add(phrase)
+            i = j
+            continue
+        word = caps[i].group(1).strip()
         low = word.lower()
         if low in _TITLE_NOISE or low in _STOPWORDS or low in _GENERIC_STOCK_TERMS:
+            i += 1
             continue
-        # Skip second half of an already-captured brand ("Beers" after "De Beers")
-        if any(low == f.lower().split()[-1] and len(f.split()) > 1 for f in found):
+        if is_non_entity_token(word):
+            i += 1
             continue
-        if low not in {f.lower() for f in found}:
-            found.append(word)
-    return found
+        if any(low in f.lower().split() and len(f.split()) > 1 for f in found):
+            i += 1
+            continue
+        _add(word)
+        i += 1
+    return hygienize_entities(found, limit=12)
 
 
 def extract_keywords(script: str, max_keywords: int = 5) -> list[str]:
@@ -643,7 +688,7 @@ def fetch_stock_clips(
     allow_used_id_reuse: bool = False,
     fallback_on_empty: bool = True,
     meta_out: dict | None = None,
-    pixabay_api_key: str = "",
+    pixabay_api_key: str | None = None,
     enable_mixkit: bool | None = None,
 ) -> list[str]:
     """Stok klip indirir: Pexels → Pixabay → Mixkit.
@@ -654,9 +699,9 @@ def fetch_stock_clips(
     """
     if enable_mixkit is None:
         enable_mixkit = bool(getattr(config, "ENABLE_MIXKIT_STOCK", True))
-    pixabay_api_key = pixabay_api_key or str(
-        getattr(config, "PIXABAY_API_KEY", "") or ""
-    )
+    if pixabay_api_key is None:
+        pixabay_api_key = str(getattr(config, "PIXABAY_API_KEY", "") or "")
+    pixabay_api_key = pixabay_api_key or ""
 
     meta = {
         "queries": [],
@@ -721,6 +766,8 @@ def fetch_stock_clips(
                 "scene": len(downloaded) - 1,
                 "source": provider,
                 "query": keyword,
+                "asset_id": video_id,
+                "metadata": {"url": video_file_url},
             }
         )
         if reused:
@@ -761,7 +808,11 @@ def _search_stock_waterfall(
     exclude_ids: set,
     allow_used_id_reuse: bool,
 ) -> tuple[str, object, str, bool] | None:
-    """Return (provider, id, url, reused) or None."""
+    """Return (provider, id, url, reused) or None.
+
+    Uses the classic per-provider search helpers so unit tests can mock
+    `_search_portrait_video` / `_search_pixabay_video` / `_search_mixkit_video`.
+    """
     providers = []
     if pexels_key:
         providers.append("pexels")
@@ -798,6 +849,306 @@ def _search_stock_waterfall(
         if url:
             return provider, vid, url, reused
     return None
+
+
+def _search_stock_waterfall_meta(
+    keyword: str,
+    *,
+    pexels_key: str,
+    pixabay_key: str,
+    enable_mixkit: bool,
+    exclude_ids: set,
+    allow_used_id_reuse: bool,
+) -> tuple[str, object, str, bool, dict] | None:
+    """Director helper: first gated list candidate as a single hit + metadata."""
+    cands = list_stock_video_candidates(
+        keyword,
+        api_key=pexels_key,
+        pixabay_api_key=pixabay_key,
+        enable_mixkit=enable_mixkit,
+        exclude_ids=exclude_ids,
+        max_candidates=1,
+    )
+    if not cands:
+        return None
+    hit = cands[0]
+    return (
+        str(hit.get("provider") or "stock"),
+        hit.get("asset_id"),
+        hit.get("download_url"),
+        bool(hit.get("reused")),
+        hit.get("metadata") or {},
+    )
+
+
+def list_stock_video_candidates(
+    keyword: str,
+    *,
+    api_key: str = "",
+    pixabay_api_key: str = "",
+    enable_mixkit: bool | None = None,
+    exclude_ids: set | None = None,
+    max_candidates: int = 8,
+) -> list[dict]:
+    """Ranked provider hits with real metadata (no download). For Director gate."""
+    if enable_mixkit is None:
+        enable_mixkit = bool(getattr(config, "ENABLE_MIXKIT_STOCK", True))
+    pixabay_api_key = pixabay_api_key or str(getattr(config, "PIXABAY_API_KEY", "") or "")
+    exclude = set(exclude_ids or ())
+    out: list[dict] = []
+
+    if api_key:
+        try:
+            out.extend(
+                _list_pexels_video_candidates(
+                    keyword, api_key, exclude_ids=exclude, limit=max_candidates
+                )
+            )
+        except Exception as exc:
+            print(f"[stock/pexels] list failed ({exc})", flush=True)
+    if len(out) < max_candidates and pixabay_api_key:
+        try:
+            out.extend(
+                _list_pixabay_video_candidates(
+                    keyword,
+                    pixabay_api_key,
+                    exclude_ids=exclude,
+                    limit=max_candidates - len(out),
+                )
+            )
+        except Exception as exc:
+            print(f"[stock/pixabay] list failed ({exc})", flush=True)
+    if len(out) < max_candidates and enable_mixkit:
+        try:
+            hit = _search_mixkit_video_meta(
+                keyword, exclude_ids=exclude, allow_used_id_reuse=False
+            )
+            if hit[1]:
+                vid, url, reused, meta = hit
+                out.append(
+                    {
+                        "provider": "mixkit",
+                        "asset_id": vid,
+                        "download_url": url,
+                        "reused": reused,
+                        "metadata": meta,
+                    }
+                )
+        except Exception as exc:
+            print(f"[stock/mixkit] list failed ({exc})", flush=True)
+
+    return out[:max_candidates]
+
+
+def _list_pexels_video_candidates(
+    keyword: str,
+    api_key: str,
+    exclude_ids: set,
+    limit: int = 8,
+) -> list[dict]:
+    response = session.get(
+        PEXELS_SEARCH_URL,
+        headers={"Authorization": api_key},
+        params={"query": keyword, "orientation": "portrait", "per_page": PEXELS_PER_PAGE},
+        timeout=30,
+    )
+    response.raise_for_status()
+    videos = response.json().get("videos") or []
+    if not videos:
+        response = session.get(
+            PEXELS_SEARCH_URL,
+            headers={"Authorization": api_key},
+            params={"query": keyword, "per_page": PEXELS_PER_PAGE},
+            timeout=30,
+        )
+        response.raise_for_status()
+        videos = response.json().get("videos") or []
+
+    ranked = []
+    for v in videos:
+        if _ids_match_exclude("pexels", v.get("id"), exclude_ids):
+            continue
+        meta = _pexels_video_metadata(v)
+        blob = " ".join(
+            str(x)
+            for x in (meta.get("url"), meta.get("user"), meta.get("tags"), keyword)
+            if x
+        )
+        score = _score_stock_candidate(str(meta.get("url") or ""), keyword)
+        if score < 0:
+            continue
+        file_meta = _pick_quality_video_file(v.get("video_files") or [])
+        if not file_meta or not file_meta.get("link"):
+            continue
+        portrait = 1 if (file_meta.get("height") or 0) > (file_meta.get("width") or 0) else 0
+        ranked.append((score, portrait, v, file_meta, meta))
+
+    ranked.sort(key=lambda row: (row[0], row[1]), reverse=True)
+    out = []
+    for score, _, v, file_meta, meta in ranked[:limit]:
+        out.append(
+            {
+                "provider": "pexels",
+                "asset_id": v.get("id"),
+                "download_url": file_meta.get("link"),
+                "reused": False,
+                "provider_rank_score": score,
+                "metadata": meta,
+            }
+        )
+    return out
+
+
+def _pexels_video_metadata(v: dict) -> dict:
+    user = v.get("user") or {}
+    return {
+        "url": str(v.get("url") or ""),
+        "user": str(user.get("name") or ""),
+        "title": "",  # Pexels video API does not provide title
+        "tags": "",
+        "description": "",
+        "duration": v.get("duration"),
+        "width": v.get("width"),
+        "height": v.get("height"),
+        "id": v.get("id"),
+    }
+
+
+def _list_pixabay_video_candidates(
+    keyword: str,
+    api_key: str,
+    exclude_ids: set,
+    limit: int = 8,
+) -> list[dict]:
+    response = session.get(
+        PIXABAY_SEARCH_URL,
+        params={
+            "key": api_key,
+            "q": keyword[:100],
+            "video_type": "film",
+            "per_page": PIXABAY_PER_PAGE,
+            "safesearch": "true",
+        },
+        timeout=30,
+    )
+    response.raise_for_status()
+    hits = response.json().get("hits") or []
+    ranked = []
+    for h in hits:
+        if _ids_match_exclude("pixabay", h.get("id"), exclude_ids):
+            continue
+        meta = {
+            "tags": str(h.get("tags") or ""),
+            "url": str(h.get("pageURL") or ""),
+            "page_url": str(h.get("pageURL") or ""),
+            "user": str(h.get("user") or ""),
+            "title": "",
+            "description": "",
+            "id": h.get("id"),
+        }
+        score = _score_stock_candidate(
+            " ".join(x for x in (meta["tags"], meta["url"], meta["user"]) if x),
+            keyword,
+        )
+        if score < 0:
+            continue
+        videos = h.get("videos") or {}
+        variants = []
+        for size_name in ("large", "medium", "small", "tiny"):
+            vv = videos.get(size_name) or {}
+            if vv.get("url"):
+                variants.append(vv)
+        file_meta = _pick_quality_video_file(
+            [
+                {
+                    "url": vv.get("url"),
+                    "link": vv.get("url"),
+                    "width": vv.get("width"),
+                    "height": vv.get("height"),
+                }
+                for vv in variants
+            ]
+        )
+        if not file_meta:
+            continue
+        link = file_meta.get("link") or file_meta.get("url")
+        if not link:
+            continue
+        portrait = 1 if (file_meta.get("height") or 0) > (file_meta.get("width") or 0) else 0
+        ranked.append((score, portrait, h, link, meta))
+
+    ranked.sort(key=lambda row: (row[0], row[1]), reverse=True)
+    out = []
+    for score, _, h, link, meta in ranked[:limit]:
+        out.append(
+            {
+                "provider": "pixabay",
+                "asset_id": h.get("id"),
+                "download_url": link,
+                "reused": False,
+                "provider_rank_score": score,
+                "metadata": meta,
+            }
+        )
+    return out
+
+
+def _search_portrait_video_meta(
+    keyword: str,
+    api_key: str,
+    exclude_ids: frozenset = frozenset(),
+    allow_used_id_reuse: bool = False,
+):
+    cands = _list_pexels_video_candidates(
+        keyword, api_key, set(exclude_ids), limit=5
+    )
+    if not cands and allow_used_id_reuse:
+        cands = _list_pexels_video_candidates(keyword, api_key, set(), limit=5)
+    if not cands:
+        return None, None, False, {}
+    pick = cands[0]
+    reused = _ids_match_exclude("pexels", pick.get("asset_id"), set(exclude_ids))
+    return pick.get("asset_id"), pick.get("download_url"), reused, pick.get("metadata") or {}
+
+
+def _search_pixabay_video_meta(
+    keyword: str,
+    api_key: str,
+    exclude_ids: frozenset = frozenset(),
+    allow_used_id_reuse: bool = False,
+):
+    cands = _list_pixabay_video_candidates(
+        keyword, api_key, set(exclude_ids), limit=5
+    )
+    if not cands and allow_used_id_reuse:
+        cands = _list_pixabay_video_candidates(keyword, api_key, set(), limit=5)
+    if not cands:
+        return None, None, False, {}
+    pick = cands[0]
+    reused = _ids_match_exclude("pixabay", pick.get("asset_id"), set(exclude_ids))
+    return pick.get("asset_id"), pick.get("download_url"), reused, pick.get("metadata") or {}
+
+
+def _search_mixkit_video_meta(
+    keyword: str,
+    exclude_ids: frozenset = frozenset(),
+    allow_used_id_reuse: bool = False,
+):
+    vid, url, reused = _search_mixkit_video(
+        keyword, exclude_ids=exclude_ids, allow_used_id_reuse=allow_used_id_reuse
+    )
+    if not url:
+        return None, None, False, {}
+    slug = str(vid or "")
+    meta = {
+        "url": url,
+        "title": "",
+        "tags": slug.replace("-", " "),
+        "description": "",
+        "user": "",
+        "id": vid,
+    }
+    return vid, url, reused, meta
 
 
 def _load_used_clip_ids(state_path: str) -> set:
@@ -930,68 +1281,11 @@ def _search_portrait_video(
     exclude_ids: frozenset = frozenset(),
     allow_used_id_reuse: bool = False,
 ):
-    """(video_id, download_url, reused_from_used_ids) — miss → (None, None, False).
-
-    Scores candidates against the query; rejects irrelevant construction/street
-    slugs; requires HD (long edge ≥ 720) and prefers portrait.
-    """
-    response = session.get(
-        PEXELS_SEARCH_URL,
-        headers={"Authorization": api_key},
-        params={"query": keyword, "orientation": "portrait", "per_page": PEXELS_PER_PAGE},
-        timeout=30,
+    """(video_id, download_url, reused_from_used_ids) — miss → (None, None, False)."""
+    vid, url, reused, _meta = _search_portrait_video_meta(
+        keyword, api_key, exclude_ids=exclude_ids, allow_used_id_reuse=allow_used_id_reuse
     )
-    response.raise_for_status()
-    data = response.json()
-
-    videos = data.get("videos", [])
-    if not videos:
-        # Retry without orientation lock — then crop landscape HD.
-        response = session.get(
-            PEXELS_SEARCH_URL,
-            headers={"Authorization": api_key},
-            params={"query": keyword, "per_page": PEXELS_PER_PAGE},
-            timeout=30,
-        )
-        response.raise_for_status()
-        videos = response.json().get("videos", [])
-    if not videos:
-        return None, None, False
-
-    exclude = set(exclude_ids)
-    ranked = []
-    for v in videos:
-        if _ids_match_exclude("pexels", v.get("id"), exclude) and not allow_used_id_reuse:
-            continue
-        blob = " ".join(
-            str(x)
-            for x in (
-                v.get("url"),
-                v.get("image"),
-                (v.get("user") or {}).get("name"),
-                keyword,
-            )
-            if x
-        )
-        # Prefer URL slug relevance; Pexels rarely returns tags.
-        score = _score_stock_candidate(str(v.get("url") or ""), keyword)
-        if score < 0:
-            continue
-        file_meta = _pick_quality_video_file(v.get("video_files") or [])
-        if not file_meta or not file_meta.get("link"):
-            continue
-        reused = _ids_match_exclude("pexels", v.get("id"), exclude)
-        ranked.append((score, 1 if (file_meta.get("height") or 0) > (file_meta.get("width") or 0) else 0, v, file_meta, reused))
-
-    if not ranked:
-        return None, None, False
-
-    ranked.sort(key=lambda row: (row[0], row[1]), reverse=True)
-    # Among top scorers, pick randomly from the best score tier (diversity).
-    best_score = ranked[0][0]
-    top = [r for r in ranked if r[0] >= best_score - 0.01][:5]
-    _, _, video, file_meta, reused = random.choice(top)
-    return video.get("id"), file_meta.get("link"), reused
+    return vid, url, reused
 
 
 def _search_pixabay_video(
@@ -1000,70 +1294,12 @@ def _search_pixabay_video(
     exclude_ids: frozenset = frozenset(),
     allow_used_id_reuse: bool = False,
 ):
-    """Pixabay video API — (id, url, reused). Prefers tall/portrait HD + relevance."""
-    response = session.get(
-        PIXABAY_SEARCH_URL,
-        params={
-            "key": api_key,
-            "q": keyword[:100],
-            "video_type": "film",
-            "per_page": PIXABAY_PER_PAGE,
-            "safesearch": "true",
-        },
-        timeout=30,
+    """Pixabay video API — (id, url, reused)."""
+    vid, url, reused, _meta = _search_pixabay_video_meta(
+        keyword, api_key, exclude_ids=exclude_ids, allow_used_id_reuse=allow_used_id_reuse
     )
-    response.raise_for_status()
-    hits = response.json().get("hits") or []
-    if not hits:
-        return None, None, False
+    return vid, url, reused
 
-    exclude = set(exclude_ids)
-    ranked = []
-    for h in hits:
-        if _ids_match_exclude("pixabay", h.get("id"), exclude) and not allow_used_id_reuse:
-            continue
-        blob = " ".join(
-            str(x)
-            for x in (h.get("tags"), h.get("pageURL"), h.get("user"), keyword)
-            if x
-        )
-        score = _score_stock_candidate(blob, keyword)
-        if score < 0:
-            continue
-        videos = h.get("videos") or {}
-        variants = []
-        for size_name in ("large", "medium", "small", "tiny"):
-            v = videos.get(size_name) or {}
-            if v.get("url"):
-                variants.append(v)
-        file_meta = _pick_quality_video_file(
-            [
-                {
-                    "url": v.get("url"),
-                    "link": v.get("url"),
-                    "width": v.get("width"),
-                    "height": v.get("height"),
-                }
-                for v in variants
-            ]
-        )
-        if not file_meta:
-            continue
-        link = file_meta.get("link") or file_meta.get("url")
-        if not link:
-            continue
-        reused = _ids_match_exclude("pixabay", h.get("id"), exclude)
-        portrait = 1 if (file_meta.get("height") or 0) > (file_meta.get("width") or 0) else 0
-        ranked.append((score, portrait, h, link, reused))
-
-    if not ranked:
-        return None, None, False
-
-    ranked.sort(key=lambda row: (row[0], row[1]), reverse=True)
-    best_score = ranked[0][0]
-    top = [r for r in ranked if r[0] >= best_score - 0.01][:5]
-    _, _, hit, link, reused = random.choice(top)
-    return hit.get("id"), link, reused
 
 
 def _search_mixkit_video(

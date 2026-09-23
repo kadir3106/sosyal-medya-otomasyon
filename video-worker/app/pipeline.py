@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import shutil
 import time
 from pathlib import Path
@@ -273,15 +274,18 @@ def _generate_video_sync(job_id: str, topic: str | None = None) -> dict:
             seconds=round(time.monotonic() - stage_started, 1),
         )
 
-        # TikTok / Reels tarzı dinamik kelime vurgulamalı altyazı + ilk 2.5 sn hook kartı
+        # TikTok / Reels tarzı dinamik kelime vurgulamalı altyazı + hook overlay.
+        # Director açıkken Hook Director planı clip fetch sonrası ASS'i yeniden yazar
+        # (kısa punch + karaoke gecikmesi); legacy yol aynı kalır.
         hook_text = script_data.get("hook_selected") or _extract_hook(script_data["script"])
+        director_on_early = os.environ.get("DIRECTOR_ENABLED", "false").lower() == "true"
         subtitle_path = write_ass(
             word_boundaries,
             str(work_dir / "subs.ass"),
             words_per_cue=2,
             highlight=True,
             add_emojis=getattr(config, "ENABLE_SUBTITLE_EMOJIS", False) is True,
-            hook_text=hook_text,
+            hook_text=None if director_on_early else hook_text,
             hook_seconds=2.5,
         )
 
@@ -364,7 +368,9 @@ def _generate_video_sync(job_id: str, topic: str | None = None) -> dict:
                 audio_duration = 30.0
             engine = str(getattr(config, "VISUAL_ENGINE", "stock") or "").lower()
             allow_stock = bool(getattr(config, "ALLOW_STOCK_FALLBACK", True))
-            stock_primary = engine == "stock"
+            # Env flag only (not MagicMock-patched config) — default off preserves legacy tests.
+            director_on = os.environ.get("DIRECTOR_ENABLED", "false").lower() == "true"
+            stock_primary = engine == "stock" or director_on
             durations = plan_scene_schedule(
                 audio_duration,
                 base_duration=SCENE_CLIP_DURATION,
@@ -387,7 +393,64 @@ def _generate_video_sync(job_id: str, topic: str | None = None) -> dict:
             concrete_nouns = script_data.get("concrete_nouns") or []
             visual_stats: dict = {}
             used_stock_clips = False
-            if visual_prompts and engine != "stock":
+            if director_on:
+                # New architecture behind flag. Model routing stays on AI router
+                # (LLM_API_URL). Legacy VISUAL_ENGINE branch below is untouched when off.
+                from app.director import plan_and_fetch_scenes
+
+                used_stock_clips = True
+                try:
+                    clip_paths = plan_and_fetch_scenes(
+                        scene_count=scene_count,
+                        topic=topic,
+                        script_data=script_data,
+                        output_dir=str(work_dir),
+                        state_path=str(media_dir / "used_clips.json"),
+                        clip_duration=SCENE_CLIP_DURATION,
+                        api_key=config.OPENROUTER_API_KEY,
+                        stats_out=visual_stats,
+                    )
+                except (FalAuthBillingError, KlingAuthBillingError) as fal_exc:
+                    _notify_fal_auth_billing_fail(job_id, fal_exc)
+                    raise
+                quality["engine"] = "director"
+                # Hook Director: short punch overlay; delay karaoke to avoid stacking.
+                hook_plan = visual_stats.get("hook_director") or {}
+                punch = str(hook_plan.get("overlay_text") or "").strip()
+                if not punch:
+                    punch = " ".join(str(hook_text or "").split()[:6])
+                hook_secs = float(hook_plan.get("hook_seconds") or 1.8)
+                karaoke_start = float(
+                    hook_plan.get("karaoke_start_seconds") or hook_secs
+                )
+                write_ass(
+                    word_boundaries,
+                    subtitle_path,
+                    words_per_cue=2,
+                    highlight=True,
+                    add_emojis=getattr(config, "ENABLE_SUBTITLE_EMOJIS", False) is True,
+                    hook_text=punch,
+                    # Phase 2.2: short punch + fade; karaoke is primary.
+                    hook_seconds=min(hook_secs, 1.6),
+                    karaoke_start_seconds=0.0,
+                    hook_max_words=5,
+                )
+                quality["hook"] = punch
+                quality["hook_director"] = hook_plan
+                quality["word_to_visual"] = visual_stats.get("word_to_visual")
+                log_event(
+                    job_id, "director_clips_ready",
+                    clip_count=len(clip_paths),
+                    beat_count=visual_stats.get("beat_count"),
+                    scene_relevance=visual_stats.get("scene_relevance"),
+                    director_plan=visual_stats.get("director_plan"),
+                    hook_director=hook_plan,
+                    word_to_visual=visual_stats.get("word_to_visual"),
+                    stock_cache_reuse_ratio=visual_stats.get("stock_cache_reuse_ratio"),
+                    ai_image_used=visual_stats.get("ai_image_used"),
+                    seconds=round(time.monotonic() - stage_started, 1),
+                )
+            elif visual_prompts and engine != "stock":
                 from app.ai_video_engine import generate_video_scenes
                 try:
                     clip_paths = generate_video_scenes(
@@ -524,7 +587,8 @@ def _generate_video_sync(job_id: str, topic: str | None = None) -> dict:
                     ],
                     "hook": hook_text,
                     "tts": tts_provider,
-                    "engine": str(getattr(config, "VISUAL_ENGINE", "unknown")),
+                    "engine": quality.get("engine")
+                    or str(getattr(config, "VISUAL_ENGINE", "unknown")),
                 }
             )
             # Hard fail: too many clips pulled from used_clips cache = topic drift.

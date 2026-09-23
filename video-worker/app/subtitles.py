@@ -55,6 +55,8 @@ def write_ass(
     add_emojis: bool = False,
     hook_text: str | None = None,
     hook_seconds: float = 2.5,
+    karaoke_start_seconds: float = 0.0,
+    hook_max_words: int = 0,
 ) -> str:
     """Kelime zamanlamalarından modern ASS altyazı üretir.
 
@@ -62,17 +64,29 @@ def write_ass(
     öne çıkaran dinamik karaoke kurgusu üretir; highlight=False geriye dönük
     uyumluluk için düz 2 kelimelik grupları korur.
 
-    hook_text: ilk hook_seconds boyunca üstte büyük hook satırı (retention).
+    hook_text: kısa punch overlay (üst). Phase 2.2: max ~1.5–2.0s + fade-out;
+    VO ile yüksek örtüşmede static title atlanır (karaoke taşır).
+    karaoke_start_seconds: karaoke bu saniyeden önce başlamaz.
+    hook_max_words: >0 ise hook metnini kısaltır (uzun statik paragraf yok).
     """
     lines = [ASS_HEADER]
     if hook_text and hook_text.strip():
-        # Soft wrap long hooks at ~42 chars for 9:16 readability.
-        wrapped = _wrap_hook_line(hook_text.strip(), max_len=42)
-        end_ticks = int(max(hook_seconds, 0.8) * TICKS_PER_SECOND)
-        lines.append(
-            f"Dialogue: 1,0:00:00.00,{_format_timestamp(end_ticks)},"
-            f"Hook,,0,0,0,,{wrapped}\n"
-        )
+        punch = hook_text.strip()
+        if hook_max_words and hook_max_words > 0:
+            punch = " ".join(punch.split()[:hook_max_words])
+        # Skip static title when it mostly duplicates the opening VO / karaoke.
+        if not _hook_duplicates_opening_vo(punch, word_boundaries):
+            wrapped = _wrap_hook_line(punch, max_len=28)
+            # Cap display; fade out so logo/product focal point isn't covered long.
+            secs = min(max(float(hook_seconds), 0.8), 1.8)
+            end_ticks = int(secs * TICKS_PER_SECOND)
+            # Soft fade-in/out (ASS \fad ms_in, ms_out).
+            fad = r"{\fad(120,450)}"
+            lines.append(
+                f"Dialogue: 1,0:00:00.00,{_format_timestamp(end_ticks)},"
+                f"Hook,,0,0,0,,{fad}{wrapped}\n"
+            )
+    karaoke_start_ticks = int(max(karaoke_start_seconds, 0.0) * TICKS_PER_SECOND)
     if not word_boundaries:
         Path(output_path).write_text("".join(lines), encoding="utf-8")
         return output_path
@@ -81,6 +95,11 @@ def write_ass(
         group = word_boundaries[start : start + words_per_cue]
         cue_start = group[0]["offset"]
         cue_end = group[-1]["offset"] + group[-1]["duration"]
+        # Skip karaoke that would stack under the hook punch overlay.
+        if cue_end <= karaoke_start_ticks:
+            continue
+        if cue_start < karaoke_start_ticks:
+            cue_start = karaoke_start_ticks
 
         if not highlight:
             escaped_words = [_escape_ass_text(w["text"]) for w in group]
@@ -103,6 +122,10 @@ def write_ass(
                 # Son kelime grubu sonuna kadar uzasın
                 if i == len(group) - 1:
                     w_end = max(w_end, cue_end)
+                if w_end <= karaoke_start_ticks:
+                    continue
+                if w_start < karaoke_start_ticks:
+                    w_start = karaoke_start_ticks
 
                 styled_parts = []
                 for j, w in enumerate(group):
@@ -126,6 +149,45 @@ def write_ass(
 
     Path(output_path).write_text("".join(lines), encoding="utf-8")
     return output_path
+
+
+def _hook_duplicates_opening_vo(
+    hook: str, word_boundaries: list[dict], *, overlap: float = 0.55
+) -> bool:
+    """True when hook mostly repeats the first spoken words (karaoke carries it)."""
+    if not hook or not word_boundaries:
+        return False
+    stop = {
+        "a",
+        "an",
+        "the",
+        "is",
+        "isn't",
+        "are",
+        "was",
+        "it",
+        "its",
+        "of",
+        "and",
+        "to",
+        "in",
+        "for",
+        "with",
+    }
+    hook_toks = {
+        w.lower().strip(".,:;!?")
+        for w in hook.split()
+        if w.lower().strip(".,:;!?") not in stop and len(w) > 1
+    }
+    vo = " ".join(str(w.get("text") or "") for w in word_boundaries[:8])
+    vo_toks = {
+        w.lower().strip(".,:;!?")
+        for w in vo.split()
+        if w.lower().strip(".,:;!?") not in stop and len(w) > 1
+    }
+    if not hook_toks or not vo_toks:
+        return False
+    return (len(hook_toks & vo_toks) / len(hook_toks)) >= overlap
 
 
 def _escape_ass_text(text: str) -> str:
