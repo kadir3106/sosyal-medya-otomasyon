@@ -80,6 +80,10 @@ services:
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
       # Default: stock video + light Ken Burns. Opt-in AI: flux_kenburns|hybrid|kling
       - VISUAL_ENGINE=${VISUAL_ENGINE:-stock}
+      # AI Director default OFF — legacy path unchanged. Model routing = AI router (LLM_API_URL).
+      - DIRECTOR_ENABLED=${DIRECTOR_ENABLED:-false}
+      - DIRECTOR_AI_IMAGE_MAX=${DIRECTOR_AI_IMAGE_MAX:-2}
+      - DIRECTOR_RELEVANCE_MIN=${DIRECTOR_RELEVANCE_MIN:-0.2}
       - FAL_KEY=${FAL_KEY}
       - ALLOW_STOCK_FALLBACK=${ALLOW_STOCK_FALLBACK:-true}
       - KLING_MAX_SCENES=${KLING_MAX_SCENES:-1}

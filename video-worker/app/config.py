@@ -116,6 +116,15 @@ class Config:
     # Video formatı: 'cinematic' (lüks/belgesel tek ekran), 'split_screen' veya 'standard'
     VIDEO_FORMAT = os.environ.get("VIDEO_FORMAT", "cinematic")
     CINEMATIC_GRADE = os.environ.get("CINEMATIC_GRADE", "true").lower() == "true"
+    # AI Director (creative plan → fetch). Default OFF — legacy VISUAL_ENGINE path unchanged.
+    # Model choice is NOT done here; LLM calls go through LLM_API_URL (AI router).
+    # Re-read env each access so tests / compose toggles are not stuck on import-time value.
+    @property
+    def DIRECTOR_ENABLED(self) -> bool:
+        return os.environ.get("DIRECTOR_ENABLED", "false").lower() == "true"
+
+    DIRECTOR_AI_IMAGE_MAX = int(os.environ.get("DIRECTOR_AI_IMAGE_MAX", "2"))
+    DIRECTOR_RELEVANCE_MIN = float(os.environ.get("DIRECTOR_RELEVANCE_MIN", "0.2"))
     # Telegram günlük özet mesajı (bkz. app/daily_digest.py) — yerel saatle (TZ) karşılaştırılır.
     DIGEST_HOUR = int(os.environ.get("DIGEST_HOUR", "21"))
     DIGEST_INTERVAL_SECONDS = int(os.environ.get("DIGEST_INTERVAL_SECONDS", "300"))
