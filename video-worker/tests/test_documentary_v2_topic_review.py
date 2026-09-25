@@ -67,3 +67,51 @@ def test_final_script_unknown_high_risk_blocks_review(monkeypatch):
     monkeypatch.setattr(review_story, "refine_script", lambda *args, **kwargs: ScriptQualityResult("The Aral Sea expanded.", "The Aral Sea shrank in 1960."))
     with pytest.raises(ValueError, match="unresolved high-risk final claim"):
         review_story.prepare_review_story("Aral Sea", "fixture", verifier=Verifier())
+
+
+def test_aral_queries_do_not_contain_watch_terms():
+    from app.documentary_v2.director.query_compiler import compile_search_intents
+    from app.documentary_v2.schemas import ShotRequirement
+
+    req = ShotRequirement(
+        "sr:aral", "beat:aral", visual_purpose="SHOW_EVIDENCE",
+        required_entities=["Aral Sea"], required_visual_concept="shrinking shoreline",
+        semantic_domain="environment",
+    )
+    queries = [intent.query.lower() for intent in compile_search_intents(req)]
+    assert not any(term in query for query in queries for term in ("watch", "foundation", "ownership"))
+
+
+def test_beat_plan_preserves_exact_script_and_claims(monkeypatch):
+    import json
+    from app.documentary_v2 import beat_planner
+    from app.documentary_v2.schemas import VerifiedClaim
+
+    script = "The Aral Sea shrank. Fishing towns changed."
+    claims = [VerifiedClaim("claim:aral", "The Aral Sea shrank.")]
+    response = {"beats": [
+        {"spoken_span": "The Aral Sea shrank.", "narrative_role": "HOOK", "primary_entities": ["Aral Sea"], "semantic_domain": "environment", "visual_purpose": "SHOW_EVIDENCE", "required_visual_concept": "shrinking shoreline", "claim_ids": ["invented"]},
+        {"spoken_span": "Fishing towns changed.", "narrative_role": "PAYOFF", "primary_entities": [], "semantic_domain": "environment", "visual_purpose": "SHOW_PROCESS", "required_visual_concept": "fishing towns"},
+    ]}
+    monkeypatch.setattr(beat_planner, "_call_llm_with_fallback", lambda *args: (json.dumps(response), "fixture"))
+    plan = beat_planner.plan_beats("Aral Sea", script, claims, "fixture")
+    assert plan.gate == "PASS"
+    assert " ".join(beat.spoken_span for beat in plan.beats) == script
+    assert [beat.claim_ids for beat in plan.beats] == [["claim:aral"], []]
+    assert plan.beats[0].visual_purpose == "SHOW_EVIDENCE"
+
+
+def test_beat_plan_rejects_invented_entity_and_dropped_sentence(monkeypatch):
+    import json
+    from app.documentary_v2 import beat_planner
+
+    script = "The Aral Sea shrank. Fishing towns changed."
+    responses = [
+        {"beats": [{"spoken_span": "The Aral Sea shrank.", "primary_entities": ["Rolex"]}, {"spoken_span": "Fishing towns changed."}]},
+        {"beats": [{"spoken_span": "The Aral Sea shrank.", "primary_entities": ["Aral Sea"]}]},
+    ]
+    for response in responses:
+        monkeypatch.setattr(beat_planner, "_call_llm_with_fallback", lambda *args: (json.dumps(response), "fixture"))
+        plan = beat_planner.plan_beats("Aral Sea", script, [], "fixture")
+        assert plan.gate == "REVIEW_REQUIRED"
+        assert " ".join(beat.spoken_span for beat in plan.beats) == script
