@@ -157,13 +157,37 @@ SADECE şu anahtarlara sahip geçerli bir JSON nesnesi döndür:
 
 _TEMPLATES = {"en": PROMPT_TEMPLATE, "tr": PROMPT_TEMPLATE_TR}
 
+DOCUMENTARY_REVIEW_PROMPT = """Write an evidence-conscious short-form mini-documentary about: {topic}
+
+Return ONLY valid JSON with keys script, title, description, tags.
+The spoken script should run approximately 22-38 seconds, open with a concrete
+topic-specific hook, develop one factual story, and end with a clear payoff.
+Use natural narration, not luxury/wealth marketing or generic viral filler.
+Do not invent sources, quotes, dates, people, or causal claims. Uncertain facts
+will be checked and removed by a separate verification step.
+"""
+
 
 def generate_script(
     topic: str,
     api_key: str,
     lang: str = "en",
     winning_context: str | None = None,
+    *,
+    style: str = "legacy",
 ) -> dict:
+    if style not in {"legacy", "documentary_review"}:
+        raise ValueError(f"unknown script style: {style}")
+    if style == "documentary_review":
+        content, _ = _call_llm_with_fallback(
+            [{"role": "user", "content": DOCUMENTARY_REVIEW_PROMPT.format(topic=topic)}],
+            api_key,
+        )
+        cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip(), flags=re.DOTALL)
+        data = json.loads(cleaned)
+        _validate_script_shape(data)
+        data["hook_selected"] = re.split(r"(?<=[.!?])\s+", data["script"].strip())[0]
+        return data
     template = _TEMPLATES.get(lang, PROMPT_TEMPLATE)
     prompt_text = template.format(topic=topic)
 
