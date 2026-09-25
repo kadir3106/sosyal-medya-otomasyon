@@ -29,7 +29,7 @@ def _exact_spans(script: str, spans: list[str]) -> bool:
 
 
 def _claim_ids(span: str, claims: list[VerifiedClaim]) -> list[str]:
-    return [claim.claim_id for claim in claims if claim.text == span]
+    return [claim.claim_id for claim in claims if claim.text and claim.text in span]
 
 
 def _fallback_beats(script: str, claims: list[VerifiedClaim]) -> BeatPlan:
@@ -88,6 +88,9 @@ def plan_beats(topic: str, script: str, claims: list[VerifiedClaim], api_key: st
                     claim_ids=_claim_ids(span, claims), importance="important",
                 )
             )
+        mapped = {claim_id for beat in beats for claim_id in beat.claim_ids}
+        if any(claim.claim_id not in mapped for claim in claims):
+            raise ValueError("factual claim not contained by a beat")
         return BeatPlan(beats, "PASS", [])
     except (KeyError, TypeError, ValueError, IndexError, RuntimeError):
         return _fallback_beats(script, claims)

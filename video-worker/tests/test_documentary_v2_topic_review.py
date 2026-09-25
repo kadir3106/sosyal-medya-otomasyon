@@ -34,6 +34,26 @@ def test_aral_fact_lookup_never_seeds_rolex(monkeypatch):
     assert not any("rolex" in title.lower() or "wilsdorf" in title.lower() for title in titles)
 
 
+def test_wrong_wikipedia_page_is_not_aral_evidence(monkeypatch):
+    from app.fact_verify import FactVerificationProvider
+    from app.script_claims import ScriptClaim
+
+    provider = FactVerificationProvider()
+    wrong = {
+        "title": "Rolex", "url": "https://en.wikipedia.org/wiki/Rolex",
+        "extract": "The Aral Sea owns the foundation.",
+    }
+    monkeypatch.setattr(provider, "_wikipedia_evidence", lambda title: wrong)
+    monkeypatch.setattr(provider, "_wikipedia_search_extract", lambda query: wrong)
+    claim = ScriptClaim(
+        "claim:aral", "The Aral Sea owns the foundation.", "ownership", ["Aral Sea"],
+        risk="HIGH", verification_required=True,
+    )
+    result = provider.verify_claims([claim], topic="Aral Sea")[0]
+    assert result.status == "unknown"
+    assert result.sources == []
+
+
 def test_final_script_claim_is_verified_again(monkeypatch):
     from app.documentary_v2 import review_story
     from app.fact_verify import VerificationResult
@@ -115,6 +135,23 @@ def test_beat_plan_rejects_invented_entity_and_dropped_sentence(monkeypatch):
         plan = beat_planner.plan_beats("Aral Sea", script, [], "fixture")
         assert plan.gate == "REVIEW_REQUIRED"
         assert " ".join(beat.spoken_span for beat in plan.beats) == script
+
+
+def test_beat_plan_maps_claims_inside_multi_sentence_span(monkeypatch):
+    import json
+    from app.documentary_v2 import beat_planner
+    from app.documentary_v2.schemas import VerifiedClaim
+
+    script = "The Aral Sea shrank. Fishing towns changed."
+    claims = [
+        VerifiedClaim("claim:sea", "The Aral Sea shrank."),
+        VerifiedClaim("claim:towns", "Fishing towns changed."),
+    ]
+    response = {"beats": [{"spoken_span": script, "primary_entities": ["Aral Sea"], "required_visual_concept": "shrinking shoreline"}]}
+    monkeypatch.setattr(beat_planner, "_call_llm_with_fallback", lambda *args: (json.dumps(response), "fixture"))
+    plan = beat_planner.plan_beats("Aral Sea", script, claims, "fixture")
+    assert plan.gate == "PASS"
+    assert plan.beats[0].claim_ids == ["claim:sea", "claim:towns"]
 
 
 def _director_review_fixture(tmp_path, *, license="STOCK_LICENSED", policy="KNOWN_REUSABLE"):
@@ -271,6 +308,65 @@ def test_stage_f_restricted_rights_block_render(monkeypatch, tmp_path):
     assert not result.output_mp4
 
 
+def test_attribution_manifest_keeps_cc_by_requirements():
+    from app.documentary_v2.assembly.attribution import build_attribution_manifest
+    from app.documentary_v2.schemas import EditDecision, EditDecisionList
+
+    edl = EditDecisionList("edl:rights", "job:rights", "job:rights", decisions=[
+        EditDecision("shot:1", "beat:1", asset_id="asset:cc", source_kind="archive", local_path="cc.jpg"),
+    ])
+    source = {
+        "license": "CC_BY", "license_policy": "ATTRIBUTION_REQUIRED",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "attribution": "Photo by Creator / CC BY 4.0",
+    }
+    manifest = build_attribution_manifest(edl, provenance_by_asset={"asset:cc": source})
+    assert manifest[0]["attribution_required"] is True
+    assert manifest[0]["license_policy"] == "ATTRIBUTION_REQUIRED"
+    assert manifest[0]["license_url"] == source["license_url"]
+    assert manifest[0]["attribution"] == source["attribution"]
+
+
+def test_restricted_license_policy_fails_even_with_stock_license():
+    from app.documentary_v2.assembly.orchestrator import _license_gate
+
+    assert _license_gate([{"license": "STOCK_LICENSED", "license_policy": "KNOWN_RESTRICTED"}]) == "FAIL"
+
+
+def test_rejected_recovery_is_not_in_edl_and_claims_are_beat_local(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from app.documentary_v2.assembly import orchestrator
+    from app.documentary_v2.schemas import DocumentaryDirectorPlan, EditDecisionList, StoryBeat, VerifiedClaim
+
+    beat = StoryBeat("beat:one", spoken_span="Aral Sea shrank.", importance="important", claim_ids=["claim:one"])
+    plan = DocumentaryDirectorPlan("plan:one", beats=[beat])
+    claims = [
+        VerifiedClaim("claim:one", "Aral Sea shrank.", status="supported", evidence=[{"url": "https://example.test/one"}]),
+        VerifiedClaim("claim:other", "Panama Canal opened.", status="supported", evidence=[{"url": "https://example.test/other"}]),
+    ]
+    seen = {}
+
+    class Recovery:
+        def recover(self, req, **kwargs):
+            seen["claim_ids"] = [claim.claim_id for claim in kwargs["claims"]]
+            return SimpleNamespace(artifact_path="rejected.mp4", selected=False, motion_graphic_plan=None)
+
+    def compile_plan(*args, **kwargs):
+        seen["recovery_paths"] = kwargs["recovery_paths"]
+        return EditDecisionList("edl:empty", "job:one", "job:one")
+
+    monkeypatch.setattr(orchestrator, "VisualRecoveryEngine", Recovery)
+    monkeypatch.setattr(orchestrator, "get_audio_duration", lambda path: 2.0)
+    monkeypatch.setattr(orchestrator, "compile_edl", compile_plan)
+    orchestrator.run_stage_f_pipeline(
+        topic="Aral Sea", script=beat.spoken_span, claims=claims, media_dir=tmp_path,
+        job_id="recovery-reject", audio_path="fixture.wav", word_boundaries=[], caption_path="fixture.ass",
+        director_plan=plan, beats=[beat], run_critic=False,
+    )
+    assert seen["claim_ids"] == ["claim:one"]
+    assert "beat:one" not in seen["recovery_paths"]
+
+
 def test_stage_f_render_timeout_is_failed_package(monkeypatch, tmp_path):
     import subprocess
 
@@ -310,6 +406,28 @@ def test_stage_f_critic_never_exceeds_three_frames(monkeypatch, tmp_path):
     )
     assert seen == [3]
     assert result.gates["FinalVideoQualityGate"] == "PASS"
+
+
+def test_stage_f_deadline_caps_ffmpeg_timeout(monkeypatch, tmp_path):
+    import time
+
+    orchestrator, plan, beat = _mock_stage_f(monkeypatch, tmp_path, license="STOCK_LICENSED")
+    seen = {}
+    original_render = orchestrator.render_from_edl
+
+    def render(*args, **kwargs):
+        seen["timeout"] = kwargs.get("render_timeout_sec")
+        return original_render(*args, **kwargs)
+
+    monkeypatch.setattr(orchestrator, "render_from_edl", render)
+    result = orchestrator.run_stage_f_pipeline(
+        topic="Aral Sea", script=beat.spoken_span, claims=[], media_dir=tmp_path,
+        job_id="deadline", audio_path="fixture.wav", word_boundaries=[], caption_path="fixture.ass",
+        director_plan=plan, beats=[beat], run_critic=False,
+        deadline_monotonic=time.monotonic() + 5.0,
+    )
+    assert not result.error
+    assert 0 < seen["timeout"] <= 5.0
 
 
 def test_edl_renderer_passes_timeout_to_ffmpeg(monkeypatch, tmp_path):
@@ -414,6 +532,7 @@ def test_runner_uses_exact_final_script_and_review_only(monkeypatch, tmp_path):
     assert calls["caption_script"] == script
     assert calls["stage_f"]["live_acquire"] is True
     assert calls["stage_f"]["materialize"] is True
+    assert calls["stage_f"]["deadline_monotonic"] > 0
     assert calls["stage_f"]["story_gates"]["FactQualityGate"] == "PASS"
     assert calls["stage_f"]["beat_plan_gate"] == "PASS"
     assert calls["stage_f"]["beats"][0].spoken_span == script

@@ -14,6 +14,18 @@ logger = logging.getLogger(__name__)
 
 _UA = "sosyal-medya-otomasyon/script-factcheck (local; documentary verification)"
 
+_QUERY_STOPWORDS = {"a", "an", "the", "of", "in", "on", "for", "and", "who", "what", "why", "really", "owns", "owned", "owner", "ownership"}
+
+
+def _page_matches_query(page: dict, query: str) -> bool:
+    """Do not use a search hit for a different named subject as claim evidence."""
+    tokens = [word for word in re.findall(r"\w+", query.casefold()) if word not in _QUERY_STOPWORDS]
+    title = set(re.findall(r"\w+", str(page.get("title") or "").casefold()))
+    if not tokens or not title:
+        return False
+    required = len(tokens) if len(tokens) <= 2 else len(tokens) - 1
+    return len(set(tokens) & title) >= required
+
 
 @dataclass
 class VerificationResult:
@@ -98,7 +110,7 @@ class FactVerificationProvider:
         sources: list[dict] = []
         for e in claim.entities or []:
             ev = entity_cache.get(e.strip().lower()) or {}
-            if ev.get("extract"):
+            if ev.get("extract") and _page_matches_query(ev, e):
                 blobs.append(str(ev["extract"]))
                 sources.append(
                     {
@@ -112,16 +124,15 @@ class FactVerificationProvider:
         claim_entities = [e.strip().lower() for e in claim.entities or [] if e.strip()]
         if not blobs and topic_key and (not claim_entities or topic_key in claim_text):
             ev = entity_cache.get(topic_key) or {}
-            if ev.get("extract"):
+            if ev.get("extract") and _page_matches_query(ev, topic_key):
                 blobs.append(str(ev["extract"]))
                 sources.append(
                     {"title": ev.get("title"), "url": ev.get("url"), "provider": "wikipedia"}
                 )
         if not blobs:
-            extra = self._wikipedia_search_extract(
-                " ".join((claim.entities or [])[:2]) or (topic.split(":")[0] if topic else claim.text[:60])
-            )
-            if extra and extra.get("extract"):
+            query = " ".join((claim.entities or [])[:2]) or (topic.split(":")[0] if topic else claim.text[:60])
+            extra = self._wikipedia_search_extract(query)
+            if extra and extra.get("extract") and _page_matches_query(extra, query):
                 blobs.append(str(extra["extract"]))
                 sources.append(
                     {
@@ -173,8 +184,13 @@ class FactVerificationProvider:
             hits = (sr.json().get("query") or {}).get("search") or []
             if not hits:
                 return None
-            page_title = hits[0].get("title") or title
-            return self._wikipedia_extract(str(page_title))
+            for hit in hits:
+                page_title = str(hit.get("title") or "")
+                if _page_matches_query({"title": page_title}, title):
+                    extracted = self._wikipedia_extract(page_title)
+                    if extracted and _page_matches_query(extracted, title):
+                        return extracted
+            return None
         except Exception as exc:
             logger.info("wiki evidence miss (%s): %s", title, exc)
             return None

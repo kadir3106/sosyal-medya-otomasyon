@@ -9,7 +9,7 @@ import json
 import re
 import time
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -86,7 +86,9 @@ def no_slideshow_gate(metrics: dict, edl: Any) -> str:
 
 def _license_gate(attribution: list[dict]) -> str:
     rights = [str(entry.get("license") or "UNKNOWN") for entry in attribution]
-    if any(right in {"RESTRICTED", "PROPRIETARY"} for right in rights):
+    if any(right in {"RESTRICTED", "PROPRIETARY"} for right in rights) or any(
+        str(entry.get("license_policy") or "") == "KNOWN_RESTRICTED" for entry in attribution
+    ):
         return "FAIL"
     if not rights or any(right not in {"INTERNAL", "STOCK_LICENSED", "PUBLIC_DOMAIN", "CC0"} for right in rights):
         return "REVIEW_REQUIRED"
@@ -147,6 +149,7 @@ def run_stage_f_pipeline(
     beat_plan_gate: str = "NOT_RUN",
     timeline_events: list[dict] | None = None,
     critic_frame_budget: int = 3,
+    deadline_monotonic: float | None = None,
     run_critic: bool = True,
     run_repair: bool = True,
     live_acquire: bool = False,
@@ -160,6 +163,15 @@ def run_stage_f_pipeline(
     from app.config import config
 
     t0 = time.perf_counter()
+    def seconds_left() -> float:
+        if deadline_monotonic is None:
+            return 240.0
+        left = deadline_monotonic - time.monotonic()
+        if left <= 0:
+            raise TimeoutError("review_job_deadline_exceeded")
+        return left
+
+    seconds_left()
     jid = job_id or f"sf_{uuid.uuid4().hex[:10]}"
     media = Path(media_dir)
     work = media / "work" / jid
@@ -185,6 +197,9 @@ def run_stage_f_pipeline(
     result.beats = [b.to_dict() for b in beats]
 
     if director_plan is None:
+        chosen_budget = director_budget or DirectorBudget(max_vlm_per_shot=3, max_search_intents_per_shot=2)
+        if deadline_monotonic is not None:
+            chosen_budget = replace(chosen_budget, max_elapsed_sec=min(chosen_budget.max_elapsed_sec, seconds_left()))
         director_plan = run_director_plan(
             job_id=jid,
             topic=topic,
@@ -194,7 +209,7 @@ def run_stage_f_pipeline(
             materialize=materialize and live_acquire and not fixtures,
             work_dir=work / "director",
             verifier_provider=verifier_provider,
-            budget=director_budget or DirectorBudget(max_vlm_per_shot=3, max_search_intents_per_shot=2),
+            budget=chosen_budget,
             fixtures=fixtures,
         )
 
@@ -208,6 +223,7 @@ def run_stage_f_pipeline(
     eng = VisualRecoveryEngine()
     cov_by_beat = {c.beat_id: c for c in (director_plan.coverage or [])}
     for beat in beats:
+        seconds_left()
         cov = cov_by_beat.get(beat.beat_id)
         has_sel = any(s.beat_id == beat.beat_id for s in (director_plan.selections or []))
         if has_sel and cov and cov.status == "COVERED":
@@ -243,25 +259,27 @@ def run_stage_f_pipeline(
         # Skip recovery if we already have a real selected asset for this beat
         if has_sel and asset_paths.get(beat.beat_id):
             continue
+        beat_claims = [claim for claim in claims if claim.claim_id in beat.claim_ids]
         rr = eng.recover(
             req,
             failure_reason="EVIDENCE_NOT_FOUND"
             if req.visual_purpose in {"EXPLAIN_RELATIONSHIP", "SHOW_EVIDENCE"}
             else "NO_CANDIDATES",
-            claims=claims,
-            relationship_edges=relationship_edges,
-            timeline_events=list(timeline_events or []),
+            claims=beat_claims,
+            relationship_edges=[edge for edge in relationship_edges or [] if edge.get("claim_id") in beat.claim_ids],
+            timeline_events=[event for event in timeline_events or [] if event.get("claim_id") in beat.claim_ids],
             output_dir=work,
             job_id=jid,
             render=True,
             generate=False,
         )
-        if rr.artifact_path:
+        if rr.artifact_path and rr.selected and getattr(getattr(rr, "verification", None), "decision", "") != "REJECT":
             recovery_paths[beat.beat_id] = rr.artifact_path
             if rr.motion_graphic_plan:
                 director_plan.motion_graphic_plans.append(rr.motion_graphic_plan)
 
     narration_dur = get_audio_duration(audio_path)
+    seconds_left()
     edl = compile_edl(
         director_plan,
         narration_duration_sec=narration_dur,
@@ -308,6 +326,7 @@ def run_stage_f_pipeline(
             bgm_volume=bgm_volume,
             duck_bgm=True,
             loudnorm=True,
+            render_timeout_sec=min(240.0, seconds_left()),
         )
     except Exception as exc:
         result.error = f"render_failed:{exc}"[:500]
@@ -334,7 +353,11 @@ def run_stage_f_pipeline(
 
     critique: FinalVideoCritique | None = None
     repairs: list[dict] = []
-    if run_critic and tqa.ok and config.FINAL_CRITIC_ENABLED:
+    critic_time_available = deadline_monotonic is None or deadline_monotonic - time.monotonic() >= 95.0
+    if run_critic and tqa.ok and config.FINAL_CRITIC_ENABLED and not critic_time_available:
+        result.gates["FinalVideoQualityGate"] = "REVIEW_REQUIRED"
+        result.critique = {"decision": "REVIEW_REQUIRED", "notes": "job_deadline_insufficient_for_critic"}
+    if run_critic and tqa.ok and config.FINAL_CRITIC_ENABLED and critic_time_available:
         critic = FinalVideoCritic(transport="direct_groq")
         critique = critic.critique(
             str(out_mp4),
@@ -358,6 +381,8 @@ def run_stage_f_pipeline(
             for action in actions:
                 if passes >= config.MAX_FINAL_REPAIR_PASSES:
                     break
+                if deadline_monotonic is not None and deadline_monotonic - time.monotonic() < 95.0:
+                    break
                 req = next(
                     (s for s in director_plan.shot_requirements or [] if s.beat_id == action.beat_id),
                     ShotRequirement(
@@ -377,8 +402,8 @@ def run_stage_f_pipeline(
                 action = repairer.apply_recovery_repair(
                     action,
                     req,
-                    claims=claims,
-                    relationship_edges=relationship_edges,
+                    claims=[claim for claim in claims if claim.claim_id in req.claim_ids],
+                    relationship_edges=[edge for edge in relationship_edges or [] if edge.get("claim_id") in req.claim_ids],
                     output_dir=str(work),
                     job_id=jid,
                 )
@@ -397,19 +422,24 @@ def run_stage_f_pipeline(
                     output_path=str(out2),
                     work_dir=str(work / "ffmpeg_r"),
                     bgm_path=bgm_path,
+                    render_timeout_sec=min(240.0, seconds_left()),
                 )
                 manifest_dict = manifest.to_dict()
                 result.output_mp4 = str(out2)
-                critique = critic.critique(
-                    str(out2),
-                    plan=director_plan,
-                    edl=edl,
-                    story_text=script,
-                    work_dir=work / "critic_frames_r",
-                    max_frames=max(1, min(critic_frame_budget, 3)),
-                )
-                result.critique = critique.to_dict()
-                result.gates["FinalVideoQualityGate"] = critique.decision
+                if deadline_monotonic is not None and deadline_monotonic - time.monotonic() < 95.0:
+                    result.gates["FinalVideoQualityGate"] = "REVIEW_REQUIRED"
+                    result.critique = {"decision": "REVIEW_REQUIRED", "notes": "job_deadline_insufficient_for_recritic"}
+                else:
+                    critique = critic.critique(
+                        str(out2),
+                        plan=director_plan,
+                        edl=edl,
+                        story_text=script,
+                        work_dir=work / "critic_frames_r",
+                        max_frames=max(1, min(critic_frame_budget, 3)),
+                    )
+                    result.critique = critique.to_dict()
+                    result.gates["FinalVideoQualityGate"] = critique.decision
 
     result.repairs = repairs
     result.gates.setdefault("NoSlideshowQualityGate", no_slideshow_gate(metrics, edl))

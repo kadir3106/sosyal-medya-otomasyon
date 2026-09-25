@@ -194,8 +194,11 @@ def run_topic_review(
             word_boundaries=boundaries, caption_path=str(caption_path), bgm_path=bgm_path,
             beats=beat_plan.beats, story_gates=prepared.gates, beat_plan_gate=beat_plan.gate,
             director_budget=budget, run_critic=True, live_acquire=True, materialize=True,
+            deadline_monotonic=deadline,
         )
         assembled.metrics.update(result.metrics)
+        if time.monotonic() > deadline and not assembled.error:
+            assembled.error = "review_job_deadline_exceeded"
         if assembled.trace_path and Path(assembled.trace_path).is_file():
             trace = json.loads(Path(assembled.trace_path).read_text(encoding="utf-8"))
             diagnostics = trace.get("director_diagnostics") or {}
