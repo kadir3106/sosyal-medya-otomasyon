@@ -336,3 +336,147 @@ def test_edl_renderer_passes_timeout_to_ffmpeg(monkeypatch, tmp_path):
             output_path=str(tmp_path / "out.mp4"), work_dir=str(tmp_path / "render"),
             render_timeout_sec=7.0,
         )
+
+
+def test_automated_verdict_requires_every_mandatory_gate():
+    from app.documentary_v2.review_runner import MANDATORY_GATES, automated_verdict
+
+    gates = {name: "PASS" for name in MANDATORY_GATES}
+    assert automated_verdict(gates) == "PASS"
+    gates["FinalVideoQualityGate"] = "NOT_RUN"
+    assert automated_verdict(gates) == "REVIEW_REQUIRED"
+    gates["LicenseProvenanceGate"] = "FAIL"
+    assert automated_verdict(gates) == "FAIL"
+
+
+def _mock_review_runner(monkeypatch, *, create_audio=True, create_captions=True, stage_f_gates=None, stage_f_metrics=None):
+    from pathlib import Path
+    from app.documentary_v2 import review_runner
+    from app.documentary_v2.assembly.orchestrator import StageFResult
+    from app.documentary_v2.beat_planner import BeatPlan
+    from app.documentary_v2.review_story import PreparedStory
+    from app.documentary_v2.schemas import StoryBeat, VerifiedStory
+
+    script = "The Aral Sea shrank in 1960."
+    prepared = PreparedStory(
+        VerifiedStory("story:aral", "Aral Sea", "Draft changed.", script), [], "Aral Sea",
+        {"FactQualityGate": "PASS", "StoryQualityGate": "PASS", "StoryConsistencyGate": "PASS"},
+    )
+    beat_plan = BeatPlan([StoryBeat("beat:aral", spoken_span=script, importance="important")], "PASS", [])
+    calls = {}
+    monkeypatch.setattr(review_runner.config, "OPENROUTER_API_KEY", "fixture")
+    monkeypatch.setattr(review_runner.config, "GROQ_API_KEY", "fixture")
+    monkeypatch.setattr(review_runner, "prepare_review_story", lambda *args, **kwargs: prepared)
+    monkeypatch.setattr(review_runner, "plan_beats", lambda *args, **kwargs: beat_plan)
+
+    async def tts(text, output_path, **kwargs):
+        calls["tts_text"] = text
+        if create_audio:
+            Path(output_path).write_bytes(b"audio")
+        return [{"text": "The", "start": 0, "end": 1}]
+
+    def captions(words, output_path, **kwargs):
+        if create_captions:
+            Path(output_path).write_text("[Script Info]\n", encoding="utf-8")
+        calls["caption_script"] = kwargs.get("script_text")
+        return output_path
+
+    def stage_f(**kwargs):
+        calls["stage_f"] = kwargs
+        return StageFResult(
+            kwargs["job_id"], kwargs["topic"], output_mp4=str(Path(kwargs["media_dir"]) / "review.mp4"),
+            gates=stage_f_gates or {name: "PASS" for name in review_runner.MANDATORY_GATES},
+            metrics=stage_f_metrics or {},
+        )
+
+    monkeypatch.setattr(review_runner, "synthesize_speech", tts)
+    monkeypatch.setattr(review_runner, "write_ass", captions)
+    monkeypatch.setattr(review_runner, "get_or_create_bgm", lambda *args, **kwargs: None)
+    monkeypatch.setattr(review_runner, "run_stage_f_pipeline", stage_f)
+    return review_runner, calls, script
+
+
+def test_runner_blank_topic_stops_before_tts(tmp_path):
+    from app.documentary_v2.review_runner import run_topic_review
+
+    result = run_topic_review(" ", tmp_path, job_id="blank")
+    assert result.error == "empty_topic"
+    assert result.metrics["automated_verdict"] == "FAIL"
+    assert result.report_path
+
+
+def test_runner_uses_exact_final_script_and_review_only(monkeypatch, tmp_path):
+    from pathlib import Path
+
+    review_runner, calls, script = _mock_review_runner(monkeypatch)
+    result = review_runner.run_topic_review("Aral Sea", tmp_path, job_id="review-test")
+    assert calls["tts_text"] == script
+    assert calls["caption_script"] == script
+    assert calls["stage_f"]["live_acquire"] is True
+    assert calls["stage_f"]["materialize"] is True
+    assert calls["stage_f"]["story_gates"]["FactQualityGate"] == "PASS"
+    assert calls["stage_f"]["beat_plan_gate"] == "PASS"
+    assert calls["stage_f"]["beats"][0].spoken_span == script
+    assert result.publish is False
+    assert result.metrics["automated_verdict"] == "PASS"
+    assert "Slideshow hissi" in Path(result.report_path).read_text(encoding="utf-8")
+
+
+def test_runner_missing_audio_returns_failed_report(monkeypatch, tmp_path):
+    review_runner, calls, _ = _mock_review_runner(monkeypatch, create_audio=False)
+    result = review_runner.run_topic_review("Aral Sea", tmp_path, job_id="no-audio")
+    assert result.error == "missing_audio_or_captions"
+    assert result.metrics["automated_verdict"] == "FAIL"
+    assert "stage_f" not in calls
+
+
+def test_runner_missing_caption_returns_failed_report(monkeypatch, tmp_path):
+    review_runner, calls, _ = _mock_review_runner(monkeypatch, create_captions=False)
+    result = review_runner.run_topic_review("Aral Sea", tmp_path, job_id="no-caption")
+    assert result.error == "missing_audio_or_captions"
+    assert result.metrics["automated_verdict"] == "FAIL"
+    assert "stage_f" not in calls
+
+
+def test_runner_critic_outage_requires_review(monkeypatch, tmp_path):
+    from app.documentary_v2.review_runner import MANDATORY_GATES
+
+    gates = {name: "PASS" for name in MANDATORY_GATES}
+    gates["FinalVideoQualityGate"] = "REVIEW_REQUIRED"
+    review_runner, _, _ = _mock_review_runner(monkeypatch, stage_f_gates=gates)
+    result = review_runner.run_topic_review("Aral Sea", tmp_path, job_id="critic-outage")
+    assert result.metrics["automated_verdict"] == "REVIEW_REQUIRED"
+
+
+def test_runner_exhausted_visual_budget_requires_review(monkeypatch, tmp_path):
+    review_runner, _, _ = _mock_review_runner(
+        monkeypatch, stage_f_metrics={"director_budget_stop_reason": "total_vlm"}
+    )
+    result = review_runner.run_topic_review("Aral Sea", tmp_path, job_id="budget-stop")
+    assert result.metrics["automated_verdict"] == "REVIEW_REQUIRED"
+
+
+def test_runner_missing_vision_key_requires_review(monkeypatch, tmp_path):
+    review_runner, _, _ = _mock_review_runner(monkeypatch)
+    monkeypatch.setattr(review_runner.config, "GROQ_API_KEY", "")
+    result = review_runner.run_topic_review("Aral Sea", tmp_path, job_id="no-vision")
+    assert result.metrics["automated_verdict"] == "REVIEW_REQUIRED"
+
+
+def test_cross_topic_queries_and_evidence_stay_isolated(monkeypatch):
+    from app.fact_verify import FactVerificationProvider
+    from app.script_claims import ScriptClaim
+    from app.documentary_v2.director.query_compiler import compile_search_intents
+    from app.documentary_v2.schemas import ShotRequirement
+
+    for topic in ("Aral Sea", "Panama Canal", "Rolex"):
+        titles = []
+        provider = FactVerificationProvider()
+        monkeypatch.setattr(provider, "_wikipedia_evidence", lambda title: titles.append(title) or {})
+        monkeypatch.setattr(provider, "_wikipedia_search_extract", lambda query: None)
+        provider.verify_claims([ScriptClaim("c", f"{topic} changed.", "historical", [topic], risk="HIGH", verification_required=True)], topic=topic)
+        req = ShotRequirement("sr:test", "beat:test", visual_purpose="SHOW_EVIDENCE", required_entities=[topic], required_visual_concept=f"{topic} evidence")
+        queries = [intent.query for intent in compile_search_intents(req)]
+        if topic != "Rolex":
+            assert not any("Rolex" in value or "Wilsdorf" in value for value in titles + queries)
+        assert topic in titles
