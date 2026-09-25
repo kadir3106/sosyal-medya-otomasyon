@@ -190,3 +190,149 @@ def test_restricted_candidate_is_not_selected(tmp_path):
         verifier_provider=MockVisualVerifier(),
     )
     assert not plan.selections
+
+
+def test_fallback_beats_are_not_rolex():
+    from app.documentary_v2.assembly.orchestrator import _beats_from_script
+
+    beats = _beats_from_script("The Aral Sea shrank. Fishing towns changed.", "Aral Sea")
+    assert all("luxury_watch" not in beat.semantic_domain for beat in beats)
+    assert all("Rolex" not in beat.primary_entities for beat in beats)
+    assert " ".join(beat.spoken_span for beat in beats) == "The Aral Sea shrank. Fishing towns changed."
+
+
+def _mock_stage_f(monkeypatch, tmp_path, *, license="UNKNOWN", coverage="COVERED"):
+    from app.documentary_v2.assembly import orchestrator
+    from app.documentary_v2.assembly.technical_qa import TechnicalQAResult
+    from app.documentary_v2.schemas import (
+        BeatCoverageReport, DocumentaryDirectorPlan, EditDecision,
+        EditDecisionList, RenderManifest, ShotSelection, StoryBeat,
+    )
+
+    beat = StoryBeat("beat:test", spoken_span="The Aral Sea shrank.", importance="important")
+    plan = DocumentaryDirectorPlan(
+        "plan:test", beats=[beat],
+        selections=[ShotSelection("shot:test", beat.beat_id, asset_id="asset:test", candidate_id="cand:test")],
+        coverage=[BeatCoverageReport(beat.beat_id, status=coverage, importance="important")],
+        diagnostics={"selected_provenance": {"asset:test": {"provider": "fixture", "license": license}}},
+    )
+    edl = EditDecisionList("edl:test", "job:test", "job:test", decisions=[
+        EditDecision("shot:test", beat.beat_id, asset_id="asset:test", media_type="stock_video", source_kind="stock", local_path="fixture.mp4", start_time=0, end_time=2),
+    ])
+    monkeypatch.setattr(orchestrator, "get_audio_duration", lambda path: 2.0)
+    monkeypatch.setattr(orchestrator, "compile_edl", lambda *args, **kwargs: edl)
+    monkeypatch.setattr(orchestrator, "render_from_edl", lambda *args, **kwargs: RenderManifest("render:test", "job:test", "job:test"))
+    monkeypatch.setattr(orchestrator, "technical_qa", lambda *args, **kwargs: TechnicalQAResult(True, duration_sec=2.0))
+    monkeypatch.setattr(orchestrator, "edl_metrics", lambda edl: {"unique_vius": 1, "seconds_by_class": {"stock_video": 2.0}})
+    return orchestrator, plan, beat
+
+
+def test_stage_f_gate_defaults_are_not_pass(monkeypatch, tmp_path):
+    orchestrator, plan, beat = _mock_stage_f(monkeypatch, tmp_path)
+    result = orchestrator.run_stage_f_pipeline(
+        topic="Aral Sea", script=beat.spoken_span, claims=[], media_dir=tmp_path,
+        job_id="defaults", audio_path="fixture.wav", word_boundaries=[], caption_path="fixture.ass",
+        director_plan=plan, beats=[beat], run_critic=False,
+    )
+    assert result.gates["FactQualityGate"] == "NOT_RUN"
+    assert result.gates["StoryQualityGate"] == "NOT_RUN"
+    assert result.gates["StoryConsistencyGate"] == "NOT_RUN"
+    assert result.gates["BeatPlanGate"] == "NOT_RUN"
+    assert result.gates["FinalVideoQualityGate"] == "NOT_RUN"
+    assert result.gates["LicenseProvenanceGate"] == "REVIEW_REQUIRED"
+
+
+def test_stage_f_gate_uses_real_story_and_rights(monkeypatch, tmp_path):
+    orchestrator, plan, beat = _mock_stage_f(monkeypatch, tmp_path, license="RESTRICTED", coverage="PARTIAL")
+    result = orchestrator.run_stage_f_pipeline(
+        topic="Aral Sea", script=beat.spoken_span, claims=[], media_dir=tmp_path,
+        job_id="real-gates", audio_path="fixture.wav", word_boundaries=[], caption_path="fixture.ass",
+        director_plan=plan, beats=[beat], run_critic=False,
+        story_gates={"FactQualityGate": "PASS", "StoryQualityGate": "REVIEW_REQUIRED", "StoryConsistencyGate": "PASS"},
+        beat_plan_gate="REVIEW_REQUIRED",
+    )
+    assert result.gates["FactQualityGate"] == "PASS"
+    assert result.gates["StoryQualityGate"] == "REVIEW_REQUIRED"
+    assert result.gates["BeatPlanGate"] == "REVIEW_REQUIRED"
+    assert result.gates["VisualCoverageGate"] == "REVIEW_REQUIRED"
+    assert result.gates["LicenseProvenanceGate"] == "FAIL"
+
+
+def test_stage_f_restricted_rights_block_render(monkeypatch, tmp_path):
+    orchestrator, plan, beat = _mock_stage_f(monkeypatch, tmp_path, license="RESTRICTED")
+    monkeypatch.setattr(orchestrator, "render_from_edl", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("restricted asset was rendered")))
+    result = orchestrator.run_stage_f_pipeline(
+        topic="Aral Sea", script=beat.spoken_span, claims=[], media_dir=tmp_path,
+        job_id="restricted-render", audio_path="fixture.wav", word_boundaries=[], caption_path="fixture.ass",
+        director_plan=plan, beats=[beat], run_critic=False,
+    )
+    assert result.error == "restricted_license"
+    assert result.gates["LicenseProvenanceGate"] == "FAIL"
+    assert not result.output_mp4
+
+
+def test_stage_f_render_timeout_is_failed_package(monkeypatch, tmp_path):
+    import subprocess
+
+    orchestrator, plan, beat = _mock_stage_f(monkeypatch, tmp_path)
+    monkeypatch.setattr(orchestrator, "render_from_edl", lambda *args, **kwargs: (_ for _ in ()).throw(subprocess.TimeoutExpired("ffmpeg", 1)))
+    result = orchestrator.run_stage_f_pipeline(
+        topic="Aral Sea", script=beat.spoken_span, claims=[], media_dir=tmp_path,
+        job_id="timeout", audio_path="fixture.wav", word_boundaries=[], caption_path="fixture.ass",
+        director_plan=plan, beats=[beat], run_critic=False,
+    )
+    assert result.error.startswith("render_failed:")
+    assert not result.output_mp4
+    assert result.gates["TechnicalRenderQA"] == "FAIL"
+
+
+def test_stage_f_critic_never_exceeds_three_frames(monkeypatch, tmp_path):
+    from app.config import config
+    from app.documentary_v2.schemas import FinalVideoCritique
+
+    orchestrator, plan, beat = _mock_stage_f(monkeypatch, tmp_path, license="STOCK_LICENSED")
+    seen = []
+
+    class Critic:
+        def __init__(self, **kwargs):
+            pass
+
+        def critique(self, *args, **kwargs):
+            seen.append(kwargs["max_frames"])
+            return FinalVideoCritique("critic:test", decision="PASS")
+
+    monkeypatch.setattr(config, "FINAL_CRITIC_ENABLED", True)
+    monkeypatch.setattr(orchestrator, "FinalVideoCritic", Critic)
+    result = orchestrator.run_stage_f_pipeline(
+        topic="Aral Sea", script=beat.spoken_span, claims=[], media_dir=tmp_path,
+        job_id="critic-budget", audio_path="fixture.wav", word_boundaries=[], caption_path="fixture.ass",
+        director_plan=plan, beats=[beat], run_critic=True, run_repair=False, critic_frame_budget=10,
+    )
+    assert seen == [3]
+    assert result.gates["FinalVideoQualityGate"] == "PASS"
+
+
+def test_edl_renderer_passes_timeout_to_ffmpeg(monkeypatch, tmp_path):
+    import subprocess
+    import pytest
+    from app.documentary_v2.assembly import edl_render
+    from app.documentary_v2.schemas import EditDecision, EditDecisionList
+
+    still = tmp_path / "still.png"
+    still.write_bytes(b"fixture")
+    edl = EditDecisionList("edl:timeout", "job:timeout", "job:timeout", decisions=[
+        EditDecision("shot:1", "beat:1", local_path=str(still), start_time=0, end_time=2),
+    ])
+    monkeypatch.setattr(edl_render, "get_audio_duration", lambda path: 2.0)
+
+    def timeout(*args, **kwargs):
+        assert kwargs["timeout"] == 7.0
+        raise subprocess.TimeoutExpired("ffmpeg", 7.0)
+
+    monkeypatch.setattr(edl_render.subprocess, "run", timeout)
+    with pytest.raises(subprocess.TimeoutExpired):
+        edl_render.render_from_edl(
+            edl, audio_path="fixture.wav", caption_path="fixture.ass",
+            output_path=str(tmp_path / "out.mp4"), work_dir=str(tmp_path / "render"),
+            render_timeout_sec=7.0,
+        )
