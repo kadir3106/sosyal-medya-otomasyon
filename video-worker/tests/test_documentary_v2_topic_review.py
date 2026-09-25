@@ -115,3 +115,78 @@ def test_beat_plan_rejects_invented_entity_and_dropped_sentence(monkeypatch):
         plan = beat_planner.plan_beats("Aral Sea", script, [], "fixture")
         assert plan.gate == "REVIEW_REQUIRED"
         assert " ".join(beat.spoken_span for beat in plan.beats) == script
+
+
+def _director_review_fixture(tmp_path, *, license="STOCK_LICENSED", policy="KNOWN_REUSABLE"):
+    from PIL import Image
+    from app.documentary_v2.director.pipeline import FixtureCandidate
+    from app.documentary_v2.schemas import AssetProvenance, MediaCandidate, StoryBeat
+
+    media = tmp_path / "watch.jpg"
+    Image.new("RGB", (48, 48), (20, 20, 20)).save(media)
+    provenance = AssetProvenance(
+        provider="pexels", source_id="stock:1", source_url="https://example.test/watch",
+        creator="Fixture Maker", license=license, license_policy=policy, stock=True,
+    )
+    candidate = MediaCandidate(
+        "cand:review", provenance=provenance, query="Rolex watch",
+        download_url="https://example.test/watch.jpg",
+        preview_url="https://example.test/watch_thumb.jpg",
+    )
+    beat = StoryBeat(
+        "beat:review", spoken_span="Rolex makes watches.", narrative_role="REVEAL",
+        primary_entities=["Rolex"], semantic_domain="luxury_watch",
+        required_visual_concept="Rolex watch",
+    )
+    return beat, {beat.beat_id: [FixtureCandidate(candidate, str(media), "actual_watch")]}
+
+
+def test_director_budget_has_whole_job_limits():
+    from app.documentary_v2.director.pipeline import DirectorBudget
+
+    budget = DirectorBudget(max_total_searches=0, max_total_vlm=0, max_total_materializations=0)
+    assert budget.max_total_vlm == 0
+
+
+def test_director_zero_vlm_budget_records_stop(tmp_path):
+    from app.documentary_v2.director.pipeline import DirectorBudget, run_director_plan
+    from app.documentary_v2.verifier.mock import MockVisualVerifier
+
+    beat, fixtures = _director_review_fixture(tmp_path)
+    plan = run_director_plan(
+        job_id="budget", topic="Rolex", story=None, beats=[beat], fixtures=fixtures,
+        verifier_provider=MockVisualVerifier(), budget=DirectorBudget(max_total_vlm=0),
+    )
+    assert plan.diagnostics["vlm_calls"] == 0
+    assert plan.diagnostics["budget_stop_reason"] == "total_vlm"
+
+
+def test_selected_provenance_preserves_rights_and_creator(tmp_path):
+    from app.documentary_v2.director.pipeline import run_director_plan
+    from app.documentary_v2.verifier.mock import MockVisualVerifier
+
+    beat, fixtures = _director_review_fixture(tmp_path)
+    plan = run_director_plan(
+        job_id="rights", topic="Rolex", story=None, beats=[beat], fixtures=fixtures,
+        verifier_provider=MockVisualVerifier(),
+    )
+    assert plan.selections
+    selection = plan.selections[0]
+    source = plan.diagnostics["selected_provenance"][selection.asset_id]
+    assert source["provider"] == "pexels"
+    assert source["source_url"] == "https://example.test/watch"
+    assert source["license"] == "STOCK_LICENSED"
+    assert source["creator"] == "Fixture Maker"
+    assert plan.diagnostics["selected_provenance"][selection.candidate_id] == source
+
+
+def test_restricted_candidate_is_not_selected(tmp_path):
+    from app.documentary_v2.director.pipeline import run_director_plan
+    from app.documentary_v2.verifier.mock import MockVisualVerifier
+
+    beat, fixtures = _director_review_fixture(tmp_path, license="RESTRICTED", policy="KNOWN_RESTRICTED")
+    plan = run_director_plan(
+        job_id="restricted", topic="Rolex", story=None, beats=[beat], fixtures=fixtures,
+        verifier_provider=MockVisualVerifier(),
+    )
+    assert not plan.selections
