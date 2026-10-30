@@ -13,7 +13,7 @@ from app.audio_bgm import get_or_create_bgm
 from app.config import config
 from app.documentary_v2.assembly.orchestrator import StageFResult, run_stage_f_pipeline
 from app.documentary_v2.beat_planner import plan_beats
-from app.documentary_v2.director.pipeline import DirectorBudget
+from app.documentary_v2.director.pipeline import DirectorBudget, run_director_plan
 from app.documentary_v2.review_story import prepare_review_story
 from app.phase3_profiles import build_music_profile
 from app.subtitles import write_ass
@@ -99,8 +99,12 @@ def _save_report(result: StageFResult, media: Path, *, reasons: list[str]) -> No
 def run_topic_review(
     topic: str, media_dir: str | Path, *, job_id: str | None = None,
     max_job_elapsed_sec: float = 360.0,
+    publish: bool = False,
+    canary_preflight: bool = False,
 ) -> StageFResult:
     """Run the isolated review path synchronously; never call publishing systems."""
+    if publish:
+        raise ValueError("Topic review cannot publish")
     jid = job_id or f"review_{uuid.uuid4().hex[:12]}"
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", jid):
         raise ValueError("job_id must be a short path-safe token")
@@ -143,6 +147,54 @@ def run_topic_review(
         reasons.extend(beat_plan.reasons)
 
         work.mkdir(parents=True, exist_ok=True)
+        director_plan = None
+        budget = None
+        if canary_preflight:
+            result.metrics["source_assessment"] = {
+                "status": "PASS" if prepared.gates.get("FactQualityGate") == "PASS" else "REJECT",
+                "verified_claims": len(prepared.claims),
+            }
+            if result.metrics["source_assessment"]["status"] != "PASS":
+                result.error = "UNSUPPORTED_CENTRAL_CLAIM"
+                result.metrics["failed_at"] = "preflight"
+                _save_report(result, media, reasons=reasons)
+                return result
+            if not config.GROQ_API_KEY:
+                result.error = "VLM_UNAVAILABLE"
+                result.metrics["failed_at"] = "preflight"
+                result.metrics["visual_assessment"] = {"status": "UNAVAILABLE", "reason": "missing_vlm_key"}
+                _save_report(result, media, reasons=reasons)
+                return result
+            budget = DirectorBudget(max_elapsed_sec=min(180.0, max(1.0, remaining() / 2)))
+            result.metrics["director_budget"] = asdict(budget)
+            director_plan = run_director_plan(
+                job_id=jid, topic=topic.strip(), story=prepared.story,
+                beats=beat_plan.beats, live_acquire=True, materialize=True,
+                work_dir=work / "director", budget=budget,
+            )
+            diagnostics = director_plan.diagnostics or {}
+            selected = len(director_plan.selections or [])
+            generic = int(diagnostics.get("generic_filler_selected") or 0)
+            coverage = {item.beat_id: item.status for item in director_plan.coverage or []}
+            uncovered_important = [
+                beat.beat_id for beat in beat_plan.beats
+                if beat.importance == "important" and coverage.get(beat.beat_id) != "COVERED"
+            ]
+            result.metrics["visual_assessment"] = {
+                "selected": selected,
+                "generic_filler_selected": generic,
+                "uncovered_important_beats": uncovered_important,
+                "coverage": [c.to_dict() for c in director_plan.coverage or []],
+                "budget_stop_reason": diagnostics.get("budget_stop_reason") or "",
+            }
+            if selected == 0 or generic >= selected or uncovered_important:
+                result.error = "GENERIC_FILLER" if generic else "TOPIC_PREFLIGHT_REJECT"
+                result.metrics["failed_at"] = "preflight"
+                result.metrics["visual_assessment"]["status"] = "REJECT"
+                _save_report(result, media, reasons=reasons)
+                return result
+            result.metrics["visual_assessment"]["status"] = "PASS"
+
         audio_path = work / "narration.mp3"
         caption_path = work / "captions.ass"
         tts_meta: dict = {}
@@ -161,7 +213,12 @@ def run_topic_review(
             return result
 
         remaining()
-        write_ass(boundaries, str(caption_path), phase3=True, script_text=prepared.story.final_script)
+        write_ass(
+            boundaries,
+            str(caption_path),
+            phase3=True,
+            script_text=prepared.story.final_script,
+        )
         if not caption_path.is_file() or caption_path.stat().st_size == 0:
             result.error = "missing_audio_or_captions"
             result.gates["TechnicalRenderQA"] = "FAIL"
@@ -186,7 +243,7 @@ def run_topic_review(
         result.metrics["music"] = {"mood": music.mood, "selection": selection, "path": bgm_path}
 
         remaining()
-        budget = DirectorBudget(max_elapsed_sec=min(180.0, max(1.0, remaining() / 2)))
+        budget = budget or DirectorBudget(max_elapsed_sec=min(180.0, max(1.0, remaining() / 2)))
         result.metrics["director_budget"] = asdict(budget)
         assembled = run_stage_f_pipeline(
             topic=topic.strip(), script=prepared.story.final_script, claims=prepared.claims,
@@ -195,6 +252,7 @@ def run_topic_review(
             beats=beat_plan.beats, story_gates=prepared.gates, beat_plan_gate=beat_plan.gate,
             director_budget=budget, run_critic=True, live_acquire=True, materialize=True,
             deadline_monotonic=deadline,
+            director_plan=director_plan, publish=False,
         )
         assembled.metrics.update(result.metrics)
         if time.monotonic() > deadline and not assembled.error:

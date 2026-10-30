@@ -22,6 +22,7 @@ from app.documentary_v2.assembly.timeline import compile_edl, edl_metrics
 from app.documentary_v2.director.pipeline import DirectorBudget, run_director_plan
 from app.documentary_v2.recovery.engine import VisualRecoveryEngine
 from app.documentary_v2.schemas import (
+    BeatCoverageReport,
     DocumentaryDirectorPlan,
     FinalVideoCritique,
     ShotRequirement,
@@ -29,6 +30,7 @@ from app.documentary_v2.schemas import (
     VerifiedClaim,
     VerifiedStory,
 )
+from app.subtitles import extend_ass_to_duration
 from app.render import get_audio_duration
 
 
@@ -62,7 +64,12 @@ def _write_json(path: Path, payload: Any) -> str:
     return str(path)
 
 
-def no_slideshow_gate(metrics: dict, edl: Any) -> str:
+def no_slideshow_gate(
+    metrics: dict,
+    edl: Any,
+    *,
+    rendered_diagnostics: dict | None = None,
+) -> str:
     """Flag low native-motion coverage for human review, never infer motion from zooms."""
     if metrics.get("unique_vius", 0) < 1:
         return "FAIL"
@@ -81,7 +88,27 @@ def no_slideshow_gate(metrics: dict, edl: Any) -> str:
     )
     if real_seconds / max(total_seconds, 1.0) < 0.4 or first_real_motion > 8.0:
         return "REVIEW_REQUIRED"
+    rendered = rendered_diagnostics or {}
+    if float(rendered.get("longest_freeze_sec") or 0.0) >= 3.0:
+        return "REVIEW_REQUIRED"
+    if float(rendered.get("tail_freeze_sec") or 0.0) >= 2.5:
+        return "REVIEW_REQUIRED"
     return "PASS"
+
+
+def _visual_coverage_gate(
+    beats: list[StoryBeat],
+    coverage_by_beat: dict[str, Any],
+    rendered_beats: set[str],
+) -> str:
+    for beat in beats:
+        coverage = coverage_by_beat.get(beat.beat_id)
+        if beat.importance == "important" and (
+            beat.beat_id not in rendered_beats
+            or getattr(coverage, "status", "UNCOVERED") != "COVERED"
+        ):
+            return "REVIEW_REQUIRED"
+    return "PASS" if len(rendered_beats) == len(beats) else "REVIEW_REQUIRED"
 
 
 def _license_gate(attribution: list[dict]) -> str:
@@ -91,6 +118,11 @@ def _license_gate(attribution: list[dict]) -> str:
     ):
         return "FAIL"
     if not rights or any(right not in {"INTERNAL", "STOCK_LICENSED", "PUBLIC_DOMAIN", "CC0"} for right in rights):
+        return "REVIEW_REQUIRED"
+    if any(
+        not entry.get("internal") and not str(entry.get("source_url") or "").strip()
+        for entry in attribution
+    ):
         return "REVIEW_REQUIRED"
     return "PASS"
 
@@ -158,8 +190,11 @@ def run_stage_f_pipeline(
     director_budget: DirectorBudget | None = None,
     beats: list[StoryBeat] | None = None,
     fixtures: dict | None = None,
+    publish: bool = False,
 ) -> StageFResult:
     """Assemble review package from prepared audio + director plan / assets."""
+    if publish:
+        raise ValueError("Stage F review cannot publish")
     from app.config import config
 
     t0 = time.perf_counter()
@@ -278,7 +313,33 @@ def run_stage_f_pipeline(
             if rr.motion_graphic_plan:
                 director_plan.motion_graphic_plans.append(rr.motion_graphic_plan)
 
+    approved_recovery_beats = {
+        plan.beat_id
+        for plan in [
+            *(director_plan.motion_graphic_plans or []),
+            *(director_plan.generated_visual_plans or []),
+        ]
+        if plan.beat_id in recovery_paths and Path(recovery_paths[plan.beat_id]).is_file()
+    }
+    for beat_id in approved_recovery_beats:
+        coverage = cov_by_beat.get(beat_id)
+        if coverage is None:
+            beat = next((item for item in beats if item.beat_id == beat_id), None)
+            coverage = BeatCoverageReport(
+                beat_id=beat_id,
+                importance=getattr(beat, "importance", "important"),
+            )
+            director_plan.coverage.append(coverage)
+            cov_by_beat[beat_id] = coverage
+        coverage.status = "COVERED"
+        coverage.failure_reason = ""
+        coverage.selected_shot_ids = [f"shot:{beat_id}:recovery"]
+        coverage.recovery_attempts.append(
+            {"strategy": "EXPLICIT_APPROVED_RECOVERY", "selected": True}
+        )
+
     narration_dur = get_audio_duration(audio_path)
+    extend_ass_to_duration(caption_path, narration_dur)
     seconds_left()
     edl = compile_edl(
         director_plan,
@@ -308,7 +369,9 @@ def run_stage_f_pipeline(
         and (beat.beat_id not in rendered_beats or getattr(cov_by_beat.get(beat.beat_id), "status", "UNCOVERED") != "COVERED")
     ]
     result.metrics["uncovered_important_beats"] = uncovered
-    result.gates["VisualCoverageGate"] = "PASS" if not uncovered and len(rendered_beats) == len(beats) else "REVIEW_REQUIRED"
+    result.gates["VisualCoverageGate"] = _visual_coverage_gate(
+        beats, cov_by_beat, rendered_beats
+    )
     if result.gates["LicenseProvenanceGate"] == "FAIL":
         result.error = "restricted_license"
         result.edl_path = _write_json(media / f"DOCUMENTARY_ENGINE_V2_STAGE_F_EDL_{jid}.json", edl.to_dict())
@@ -442,7 +505,14 @@ def run_stage_f_pipeline(
                     result.gates["FinalVideoQualityGate"] = critique.decision
 
     result.repairs = repairs
-    result.gates.setdefault("NoSlideshowQualityGate", no_slideshow_gate(metrics, edl))
+    result.gates.setdefault(
+        "NoSlideshowQualityGate",
+        no_slideshow_gate(
+            metrics,
+            edl,
+            rendered_diagnostics=(tqa.to_dict().get("details") or {}),
+        ),
+    )
     attribution = build_attribution_manifest(edl, provenance_by_asset=provenance_by_asset)
     result.gates["LicenseProvenanceGate"] = _license_gate(attribution)
     result.edl_path = _write_json(media / f"DOCUMENTARY_ENGINE_V2_STAGE_F_EDL_{jid}.json", edl.to_dict())
@@ -479,9 +549,15 @@ def run_stage_f_pipeline(
         "beats": [b.to_dict() for b in beats],
         "shot_requirements": [s.to_dict() for s in (director_plan.shot_requirements or [])],
         "selections": [s.to_dict() for s in (director_plan.selections or [])],
+        "verifications": list(director_plan.verifications or []),
+        "motion_graphic_plans": [
+            plan.to_dict() for plan in (director_plan.motion_graphic_plans or [])
+        ],
         "director_diagnostics": director_plan.diagnostics,
         "coverage": [c.to_dict() for c in (director_plan.coverage or [])],
         "edl_metrics": metrics,
+        "technical_qa": result.metrics.get("technical_qa"),
+        "uncovered_important_beats": result.metrics.get("uncovered_important_beats"),
         "gates": result.gates,
         "critique": result.critique,
         "repairs": repairs,

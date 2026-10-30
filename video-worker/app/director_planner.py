@@ -24,8 +24,8 @@ from app.script_gen import _call_llm_with_fallback
 logger = logging.getLogger(__name__)
 
 PLANNER_SYSTEM = """You are a short-form Vertical 9:16 dark-luxury mini-documentary director.
-Split the narration into visual beats so viewers SEE key concepts as they are spoken
-(entity-first: brand, person, foundation, money, place, tax/document).
+Decompose FINAL narration into semantic STORY BEATS (not timer cuts).
+Each beat must answer: what is said, who/what is subject, what viewer must SEE, what NEW information the shot provides.
 
 PRIORITY (never sacrifice an earlier item for a later one):
 1) semantic relevance  2) entity accuracy  3) visual storytelling
@@ -34,9 +34,11 @@ Never fill time with unrelated/generic stock just to hit a cut rate.
 
 Return ONLY valid JSON (no markdown) with keys:
   "hook": {
-    "overlay_text": short punch phrase max 6 words (NOT a long paragraph),
-    "hook_seconds": number 1.2-2.5,
-    "karaoke_start_seconds": same or slightly after hook end (avoid overlap),
+    "overlay_text": "" (PREFERRED — leave empty; karaoke carries the hook;
+      only set a short 2-4 word editorial punch if truly necessary and NOT
+      duplicating opening VO / ALL-CAPS marketing titles),
+    "hook_seconds": number 0.8-1.5 when overlay is used,
+    "karaoke_start_seconds": 0 (karaoke starts with VO),
     "hero_shot": "hero_closeup"|"wide"|"archival",
     "motion": "slow_push"|"static_kb"|"hold"|"punch_in"
   },
@@ -57,9 +59,10 @@ Each visual_beat:
   primary_entities, visual_intent, preferred_media, must_show, avoid,
   search_queries, shot_type, motion, overlay_intent (none|punch_word|number),
   visual_change (new_asset|punch_in|crop_zoom|archive_motion|reuse_with_motion),
+  evidence_role (proof|archive|document|location|product|contrast|atmosphere),
+  required_visual_concept (what must appear on screen — decide BEFORE search),
   fallback_ladder, confidence (0-1), allow_ai_generation,
-  audio_cue (optional string for Phase 3 SFX — do not require audio now),
-  emphasis_cue (optional string for Phase 3 — do not require audio now)
+  audio_cue (optional), emphasis_cue (optional)
 
 Rules:
 - Do NOT pick LLM model names or invent API providers.
@@ -67,10 +70,16 @@ Rules:
 - Never use meme/reaction as default style.
 - Entity beats must keep exact names in search_queries (e.g. Hans Wilsdorf, not "businessman").
 - Money/billions → financial visual; places → location; tax/document → document/mechanism visual.
-- visual_change: prefer punch_in/crop_zoom on the SAME good asset when attention shifts
-  but the entity is unchanged — a new download is NOT required for every beat.
+- visual_change: DEFAULT new_asset when concept, evidence_role, or claim family changes.
+  Same-asset punch_in/crop_zoom is LAST resort — only when the SAME visual information
+  continues and a controlled reframing is needed. Zoom is NOT new information.
+- Motion concepts (markets, cities, manufacturing, crowds) prefer stock_video over stills.
+- Person/archive/history: stills are fine.
+- Decide required_visual_concept FIRST (e.g. "founder archive portrait"), then search.
 - Do NOT park one generic stock clip for 4–5 empty seconds.
-- Hook overlay must NOT duplicate karaoke wording at the same time.
+- Hook overlay_text should almost always be empty — narration + karaoke is enough.
+  Never invent ALL-CAPS marketing titles that compete with captions.
+- Named PERSON entities: prefer archive/portrait retrieval over generic product/storefront.
 """
 
 # Concept cues for heuristic beat segmentation (not hard word-count chops).
@@ -82,7 +91,7 @@ _PLACE_RE = re.compile(
     r"\b(switzerland|swiss|geneva|london|paris|new york|zurich)\b", re.I
 )
 _PERSON_RE = re.compile(
-    r"\b(hans\s+wilsdorf|wilsdorf|[A-Z][a-z]+\s+[A-Z][a-z]+)\b"
+    r"\b([A-Z][a-z]+(?:-[A-Z][a-z]+)?\s+[A-Z][a-z]+(?:-[A-Z][a-z]+)?)\b"
 )
 _ORG_RE = re.compile(
     r"\b(foundation|foundation'?s|ownership|owns|shares?|empire)\b", re.I
@@ -139,13 +148,36 @@ def _parse_visual_beat(raw: dict, *, index: int, scene_index: int) -> VisualBeat
         duration_hint = float(dur) if dur is not None else None
     except (TypeError, ValueError):
         duration_hint = None
+    from app.storyboard import (
+        compute_visual_information_id,
+        _infer_evidence_role,
+        _required_concept,
+    )
+
+    concept = str(raw.get("concept") or "").strip()[:80]
+    narrative = str(raw.get("narrative_role") or "evidence").strip()[:32]
+    span = str(raw.get("spoken_span") or "").strip()[:240]
+    evidence = str(raw.get("evidence_role") or "").strip()[:32] or _infer_evidence_role(
+        concept, narrative, span
+    )
+    entity0 = ents[0] if ents else ""
+    required = str(raw.get("required_visual_concept") or "").strip()[:200] or _required_concept(
+        entity0, concept, narrative, evidence
+    )
+    vid = compute_visual_information_id(
+        entity=entity0,
+        concept=concept,
+        evidence_role=evidence,
+        required_visual_concept=required,
+        media_kind=(preferred or ["stock_video"])[0] if preferred else "stock_video",
+    )
     return VisualBeat(
         index=index,
         scene_index=scene_index,
-        spoken_span=str(raw.get("spoken_span") or "").strip()[:240],
+        spoken_span=span,
         duration_hint=duration_hint,
-        concept=str(raw.get("concept") or "").strip()[:80],
-        narrative_role=str(raw.get("narrative_role") or "evidence").strip()[:32],
+        concept=concept,
+        narrative_role=narrative,
         primary_entities=ents,
         visual_intent=str(raw.get("visual_intent") or "").strip()[:400],
         preferred_media=preferred or ["stock_video", "stock_photo"],
@@ -162,30 +194,32 @@ def _parse_visual_beat(raw: dict, *, index: int, scene_index: int) -> VisualBeat
         or "new_asset",
         audio_cue=str(raw.get("audio_cue") or "").strip()[:64],
         emphasis_cue=str(raw.get("emphasis_cue") or "").strip()[:64],
+        evidence_role=evidence,
+        required_visual_concept=required,
+        factual_claim_id=str(raw.get("factual_claim_id") or "").strip()[:32],
+        visual_information_id=vid,
     )
 
 
 def parse_hook_plan(raw: Any, *, topic: str = "", script: str = "") -> HookDirectorPlan:
-    """Punch overlay + karaoke delay; never a long static paragraph."""
+    """Hook plan: default NO static title — karaoke carries opening VO."""
     if not isinstance(raw, dict):
         raw = {}
+    # Phase 3.1: empty overlay is the correct default (no auto-fill from topic).
     text = str(raw.get("overlay_text") or "").strip()
-    if not text:
-        text = _default_hook_overlay(topic=topic, script=script)
     words = text.split()
-    if len(words) > 6:
-        text = " ".join(words[:6])
+    if len(words) > 5:
+        text = " ".join(words[:5])
     try:
-        hook_seconds = float(raw.get("hook_seconds", 1.8))
+        hook_seconds = float(raw.get("hook_seconds", 1.0))
     except (TypeError, ValueError):
-        hook_seconds = 1.8
-    hook_seconds = max(1.0, min(2.8, hook_seconds))
+        hook_seconds = 1.0
+    hook_seconds = max(0.8, min(1.5, hook_seconds)) if text else 0.0
     try:
         karaoke_start = float(raw.get("karaoke_start_seconds", 0.0))
     except (TypeError, ValueError):
         karaoke_start = 0.0
-    # Phase 2.1: karaoke follows VO from t=0; hook punch uses separate ASS style/layout.
-    karaoke_start = max(0.0, min(karaoke_start, 0.5))
+    karaoke_start = max(0.0, min(karaoke_start, 0.3))
     return HookDirectorPlan(
         overlay_text=text,
         hook_seconds=hook_seconds,
@@ -196,12 +230,8 @@ def parse_hook_plan(raw: Any, *, topic: str = "", script: str = "") -> HookDirec
 
 
 def _default_hook_overlay(*, topic: str, script: str) -> str:
-    # Prefer topic brand punch; fall back to first 6 script words.
-    topic_words = (topic or "").strip().split()
-    if topic_words:
-        return " ".join(topic_words[:4])
-    script_words = (script or "").strip().split()
-    return " ".join(script_words[:6]) if script_words else "Watch this"
+    """Deprecated — Phase 3.1 leaves overlay empty. Kept for callers/tests."""
+    return ""
 
 
 def parse_scene_plan_document(
@@ -342,13 +372,25 @@ def _beat_from_chunk(
         queries = [ents[0], f"{ents[0]} {topic}".strip()]
         preferred = ["stock_photo", "stock_video"]  # archive/entity bias
         intent = f"Exact visual proof of {', '.join(ents)}"
-    if _PERSON_RE.search(chunk) or any("wilsdorf" in e.lower() for e in ents):
-        narrative = "entity_proof"
-        concept = "founder_archive"
-        shot = "archival"
-        preferred = ["stock_photo", "stock_video"]
-        queries = (ents[:1] or ["Hans Wilsdorf"]) + ["Hans Wilsdorf portrait archive"]
-        intent = "Archive / real-world portrait of the named person — not generic businessman"
+    from app.person_archive import looks_like_person_name
+
+    person_ents = [e for e in ents if looks_like_person_name(e)]
+    if person_ents or _PERSON_RE.search(chunk):
+        person = person_ents[0] if person_ents else (
+            _PERSON_RE.search(chunk).group(0) if _PERSON_RE.search(chunk) else ""
+        )
+        if person and looks_like_person_name(person):
+            narrative = "entity_proof"
+            concept = "person_archive"
+            shot = "archival"
+            preferred = ["stock_photo", "stock_video"]
+            queries = [person, f"{person} portrait archive", f"{person} historical"]
+            intent = (
+                f"Archive / real-world portrait of {person} — "
+                "not generic businessman or storefront"
+            )
+            if person not in ents:
+                ents = [person] + list(ents)
     if _ORG_RE.search(chunk):
         concept = "ownership"
         queries = queries or ["foundation ownership headquarters", topic]
@@ -389,6 +431,27 @@ def _beat_from_chunk(
 
     must = hygienize_entities(must) or ([topic] if topic else ["subject"])
     ents = hygienize_entities(list(ents) or list(must[:2]))
+    from app.storyboard import (
+        compute_visual_information_id,
+        _infer_evidence_role,
+        _required_concept,
+        prefers_video_for_concept,
+    )
+
+    evidence = _infer_evidence_role(concept, narrative, chunk)
+    entity0 = ents[0] if ents else ""
+    required = _required_concept(entity0, concept, narrative, evidence)
+    if prefers_video_for_concept(concept, narrative) and evidence not in {"archive", "document"}:
+        preferred = ["stock_video", "stock_photo"] + [
+            p for p in preferred if p not in {"stock_video", "stock_photo"}
+        ]
+    vid = compute_visual_information_id(
+        entity=entity0,
+        concept=concept,
+        evidence_role=evidence,
+        required_visual_concept=required,
+        media_kind=preferred[0] if preferred else "stock_video",
+    )
     return VisualBeat(
         index=index,
         scene_index=scene_index,
@@ -413,6 +476,9 @@ def _beat_from_chunk(
         allow_ai_generation=(narrative in {"money", "document", "evidence"} and not ents),
         audio_cue="",
         emphasis_cue="number_hit" if overlay == "number" else "",
+        evidence_role=evidence,
+        required_visual_concept=required,
+        visual_information_id=vid,
     )
 
 
@@ -450,14 +516,30 @@ def _heuristic_beats_for_scene(
         )
         for i, c in enumerate(chunks)
     ]
-    # Same entity across consecutive beats → visual change without new download.
+    # Same entity alone does NOT justify punch_in — only when concept AND
+    # evidence_role are identical (same visual information continuing).
     for i in range(1, len(beats)):
-        prev_e = {e.lower() for e in beats[i - 1].primary_entities}
-        cur_e = {e.lower() for e in beats[i].primary_entities}
-        if prev_e and cur_e and (prev_e & cur_e):
-            beats[i].visual_change = "punch_in"
-            beats[i].motion = "punch_in"
-            beats[i].audio_cue = beats[i].audio_cue or "whoosh_soft"
+        prev, cur = beats[i - 1], beats[i]
+        same_concept = (prev.concept or "").lower() == (cur.concept or "").lower()
+        same_evidence = (prev.evidence_role or "") == (cur.evidence_role or "")
+        prev_e = {e.lower() for e in prev.primary_entities}
+        cur_e = {e.lower() for e in cur.primary_entities}
+        if (
+            prev_e
+            and cur_e
+            and (prev_e & cur_e)
+            and same_concept
+            and same_evidence
+            and (prev.required_visual_concept or "").lower()
+            == (cur.required_visual_concept or "").lower()
+        ):
+            # Last-resort controlled transform — still same visual_information_id
+            cur.visual_change = "punch_in"
+            cur.motion = "punch_in"
+            cur.visual_information_id = prev.visual_information_id
+            cur.audio_cue = cur.audio_cue or "whoosh_soft"
+        else:
+            cur.visual_change = "new_asset"
     return beats
 
 

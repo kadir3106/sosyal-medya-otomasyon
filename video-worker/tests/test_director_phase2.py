@@ -226,7 +226,8 @@ def test_llm_storyboard_failure_safe_heuristic_fallback():
     )
     assert len(doc.scenes) == 3
     assert doc.hook is not None
-    assert doc.hook.overlay_text
+    # Phase 3.1: empty static title is the correct default
+    assert doc.hook.overlay_text == ""
     for sc in doc.scenes:
         assert sc.must_show
         assert sc.avoid
@@ -331,7 +332,8 @@ def test_word_to_visual_skeleton_is_loggable():
     assert chain["audio_cue"] == "whoosh_soft"
 
 
-def test_same_entity_consecutive_beats_prefer_punch_in_not_new_download():
+def test_same_entity_consecutive_beats_prefer_new_visual_information():
+    """Same brand entity does NOT auto-punch-in; new info preferred."""
     doc = plan_scenes(
         scene_count=1,
         topic="Rolex",
@@ -341,13 +343,11 @@ def test_same_entity_consecutive_beats_prefer_punch_in_not_new_download():
     )
     beats = doc.scenes[0].ensure_beats()
     if len(beats) >= 2:
-        same = (
-            set(e.lower() for e in beats[0].primary_entities)
-            & set(e.lower() for e in beats[1].primary_entities)
+        # Default storytelling: new_asset unless identical required visual concept
+        assert beats[1].visual_change == "new_asset" or not beats[1].wants_reuse_visual_change() or (
+            beats[0].required_visual_concept == beats[1].required_visual_concept
+            and beats[0].evidence_role == beats[1].evidence_role
         )
-        if same:
-            assert beats[1].wants_reuse_visual_change()
-
 
 def test_tax_document_concept_maps_to_document_intent():
     doc = plan_scenes(

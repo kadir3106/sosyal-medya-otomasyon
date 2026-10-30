@@ -70,6 +70,11 @@ class VisualBeat:
     # Phase 3 reserved — storyboard may carry cues; audio pipeline unchanged in Phase 2.
     audio_cue: str = ""
     emphasis_cue: str = ""
+    # Storytelling correction — decision-first fields
+    evidence_role: str = "illustrative"
+    required_visual_concept: str = ""
+    factual_claim_id: str = ""
+    visual_information_id: str = ""
 
     def kind_chain(self) -> list[str]:
         ordered: list[str] = []
@@ -81,11 +86,19 @@ class VisualBeat:
             ordered = ["stock_video", "stock_photo"]
         if self.allow_ai_generation and "ai_image" not in ordered:
             ordered.append("ai_image")
-        # Entity beats: prefer photo/archive before generic video filler
-        if self.primary_entities and ordered[0] == "stock_video":
+        # Entity / archive beats: prefer photo before generic video filler
+        from app.storyboard import prefers_video_for_concept
+
+        want_video = prefers_video_for_concept(self.concept, self.narrative_role)
+        if self.evidence_role == "archive" or (
+            self.primary_entities and not want_video and ordered[0] == "stock_video"
+        ):
             if "stock_photo" in ordered:
                 ordered.remove("stock_photo")
                 ordered.insert(0, "stock_photo")
+        elif want_video and "stock_video" in ordered:
+            ordered.remove("stock_video")
+            ordered.insert(0, "stock_video")
         return ordered
 
     def entity_first_queries(self, topic: str = "") -> list[str]:
@@ -169,6 +182,10 @@ class VisualBeat:
             "confidence": self.confidence,
             "audio_cue": self.audio_cue or None,
             "emphasis_cue": self.emphasis_cue or None,
+            "evidence_role": self.evidence_role,
+            "required_visual_concept": self.required_visual_concept[:200],
+            "factual_claim_id": self.factual_claim_id or None,
+            "visual_information_id": self.visual_information_id or None,
         }
 
     def to_meta(self) -> dict[str, Any]:
@@ -192,6 +209,10 @@ class VisualBeat:
             "resolved_duration": self.resolve_duration_hint(),
             "audio_cue": self.audio_cue or None,
             "emphasis_cue": self.emphasis_cue or None,
+            "evidence_role": self.evidence_role,
+            "required_visual_concept": self.required_visual_concept[:200],
+            "factual_claim_id": self.factual_claim_id or None,
+            "visual_information_id": self.visual_information_id or None,
         }
 
 

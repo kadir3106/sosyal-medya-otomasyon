@@ -123,8 +123,100 @@ class Config:
     def DIRECTOR_ENABLED(self) -> bool:
         return os.environ.get("DIRECTOR_ENABLED", "false").lower() == "true"
 
+    # Documentary Engine V2 — Stage A: schemas/telemetry only. Default OFF.
+    # When true later (Stage B+), production uses V2 path; Stage A never executes V2.
+    @property
+    def DOCUMENTARY_ENGINE_V2(self) -> bool:
+        return os.environ.get("DOCUMENTARY_ENGINE_V2", "false").lower() == "true"
+
+    # Stage C VisualVerifier — isolated; default OFF; not wired to /generate.
+    @property
+    def VISUAL_VERIFIER_ENABLED(self) -> bool:
+        return os.environ.get("VISUAL_VERIFIER_ENABLED", "false").lower() == "true"
+
+    VISUAL_VERIFIER_PROVIDER = os.environ.get("VISUAL_VERIFIER_PROVIDER", "mock")
+    VISUAL_VERIFIER_MODEL = os.environ.get("VISUAL_VERIFIER_MODEL", "")
+    VISUAL_VERIFIER_FALLBACK_PROVIDER = os.environ.get(
+        "VISUAL_VERIFIER_FALLBACK_PROVIDER", ""
+    )
+    VISUAL_VERIFIER_TIMEOUT = float(os.environ.get("VISUAL_VERIFIER_TIMEOUT", "45"))
+    VISUAL_VERIFIER_MAX_CANDIDATES = int(
+        os.environ.get("VISUAL_VERIFIER_MAX_CANDIDATES", "5")
+    )
+    VISUAL_VERIFIER_MAX_FRAMES = int(os.environ.get("VISUAL_VERIFIER_MAX_FRAMES", "7"))
+    VISUAL_VERIFIER_CACHE = (
+        os.environ.get("VISUAL_VERIFIER_CACHE", "true").lower() == "true"
+    )
+    VISUAL_VERIFIER_PROMPT_VERSION = os.environ.get(
+        "VISUAL_VERIFIER_PROMPT_VERSION", "visual-verifier-v1"
+    )
+    # Stage D.1: direct_groq | gateway | auto (prefer GROQ_API_KEY for vision)
+    VISUAL_VERIFIER_TRANSPORT = os.environ.get("VISUAL_VERIFIER_TRANSPORT", "auto")
+    GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+    GROQ_API_URL = os.environ.get(
+        "GROQ_API_URL", "https://api.groq.com/openai/v1/chat/completions"
+    )
+
+    # Stage E recovery budgets — conservative defaults; V2 OFF; no auto spend.
+    RECOVERY_MAX_ATTEMPTS_PER_BEAT = int(
+        os.environ.get("RECOVERY_MAX_ATTEMPTS_PER_BEAT", "3")
+    )
+    RECOVERY_MAX_MOTION_GRAPHIC_RENDERS = int(
+        os.environ.get("RECOVERY_MAX_MOTION_GRAPHIC_RENDERS", "4")
+    )
+    RECOVERY_MAX_AI_GENERATION_CALLS = int(
+        os.environ.get("RECOVERY_MAX_AI_GENERATION_CALLS", "1")
+    )
+    RECOVERY_MAX_GENERATION_COST_PER_VIDEO = float(
+        os.environ.get("RECOVERY_MAX_GENERATION_COST_PER_VIDEO", "0.50")
+    )
+    RECOVERY_MAX_GENERATION_COST_PER_BEAT = float(
+        os.environ.get("RECOVERY_MAX_GENERATION_COST_PER_BEAT", "0.25")
+    )
+    STAGE_E_LIVE_GENERATION = (
+        os.environ.get("STAGE_E_LIVE_GENERATION", "false").lower() == "true"
+    )
+    GENERATED_VIDEO_PROVIDER = os.environ.get(
+        "GENERATED_VIDEO_PROVIDER", "mock"
+    )  # mock|fal_kling
+
+    # Stage F — EDL assembly / critic / repair (V2 still OFF by default)
+    MAX_FINAL_REPAIR_PASSES = int(os.environ.get("MAX_FINAL_REPAIR_PASSES", "2"))
+    MAX_REPAIRS_PER_BEAT = int(os.environ.get("MAX_REPAIRS_PER_BEAT", "1"))
+    MAX_EXTRA_VLM_CALLS = int(os.environ.get("MAX_EXTRA_VLM_CALLS", "12"))
+    MAX_EXTRA_GENERATION_COST = float(os.environ.get("MAX_EXTRA_GENERATION_COST", "0.25"))
+    STAGE_F_RUN = os.environ.get("STAGE_F_RUN", "false").lower() == "true"
+    FINAL_CRITIC_ENABLED = (
+        os.environ.get("FINAL_CRITIC_ENABLED", "true").lower() == "true"
+    )
+
     DIRECTOR_AI_IMAGE_MAX = int(os.environ.get("DIRECTOR_AI_IMAGE_MAX", "2"))
     DIRECTOR_RELEVANCE_MIN = float(os.environ.get("DIRECTOR_RELEVANCE_MIN", "0.2"))
+    # Phase 3 audio/captions/music/retention — rollback with *_ENABLED=false.
+    @property
+    def PHASE3_AUDIO_ENABLED(self) -> bool:
+        return os.environ.get("PHASE3_AUDIO_ENABLED", "true").lower() == "true"
+
+    @property
+    def PHASE3_CAPTIONS_ENABLED(self) -> bool:
+        return os.environ.get("PHASE3_CAPTIONS_ENABLED", "true").lower() == "true"
+
+    @property
+    def PHASE3_MUSIC_ENABLED(self) -> bool:
+        return os.environ.get("PHASE3_MUSIC_ENABLED", "true").lower() == "true"
+
+    @property
+    def PHASE3_RETENTION_ENABLED(self) -> bool:
+        return os.environ.get("PHASE3_RETENTION_ENABLED", "true").lower() == "true"
+
+    @property
+    def PHASE3_HOOK_TITLE_ENABLED(self) -> bool:
+        # Phase 3.1 default OFF — karaoke/narration carries the hook.
+        return os.environ.get("PHASE3_HOOK_TITLE_ENABLED", "false").lower() == "true"
+
+    ELEVENLABS_STABILITY = os.environ.get("ELEVENLABS_STABILITY", "")
+    ELEVENLABS_SIMILARITY = os.environ.get("ELEVENLABS_SIMILARITY", "")
+    ELEVENLABS_STYLE = os.environ.get("ELEVENLABS_STYLE", "")
     # Telegram günlük özet mesajı (bkz. app/daily_digest.py) — yerel saatle (TZ) karşılaştırılır.
     DIGEST_HOUR = int(os.environ.get("DIGEST_HOUR", "21"))
     DIGEST_INTERVAL_SECONDS = int(os.environ.get("DIGEST_INTERVAL_SECONDS", "300"))

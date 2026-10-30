@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from pathlib import Path
 from typing import Any
@@ -65,11 +66,31 @@ def plan_and_fetch_scenes(
         beats = beats[:max_beats]
         logger.info("Director: capped visual beats to %s", max_beats)
 
-    ai_budget = max(int(getattr(config, "DIRECTOR_AI_IMAGE_MAX", 2)), 0)
-    ai_used = 0
-
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    media_dir = Path(state_path).parent if state_path else out_dir
+
+    # Phase 3.1 retention pre-pass: same-asset novelty before fetch (no random cuts).
+    retention_events: list = []
+    if bool(getattr(config, "PHASE3_RETENTION_ENABLED", True)):
+        from app.phase3_retention import (
+            apply_retention_to_visual_beats,
+            plan_retention_events,
+        )
+
+        skeletons = []
+        for beat in beats:
+            sk = beat.word_to_visual_skeleton()
+            sk["duration"] = beat.resolve_duration_hint(
+                default=min(float(clip_duration), 2.0)
+            )
+            sk["primary_entities"] = list(beat.primary_entities or beat.must_show)
+            skeletons.append(sk)
+        retention_events = plan_retention_events(skeletons)
+        apply_retention_to_visual_beats(beats, retention_events)
+
+    ai_budget = max(int(getattr(config, "DIRECTOR_AI_IMAGE_MAX", 2)), 0)
+    ai_used = 0
 
     clip_paths: list[str] = []
     beat_log: list[dict[str, Any]] = []
@@ -81,6 +102,7 @@ def plan_and_fetch_scenes(
     prev_accepted: dict[str, Any] | None = None
     recent_fps: list[str] = []
     recent_blobs: list[str] = []
+    person_retrieval_log: list[dict[str, Any]] = []
 
     for beat in beats:
         duration = beat.resolve_duration_hint(
@@ -90,6 +112,7 @@ def plan_and_fetch_scenes(
             beat,
             topic=topic,
             output_dir=out_dir,
+            media_dir=media_dir,
             clip_duration=duration,
             clip_index=len(clip_paths),
             ai_budget_left=ai_budget - ai_used,
@@ -98,6 +121,7 @@ def plan_and_fetch_scenes(
             prev_accepted=prev_accepted,
             recent_fps=recent_fps,
             recent_blobs=recent_blobs,
+            person_log=person_retrieval_log,
         )
         chain = {
             **beat.word_to_visual_skeleton(),
@@ -114,8 +138,14 @@ def plan_and_fetch_scenes(
             "specificity_score": meta.get("specificity_score"),
             "gate_reason": meta.get("gate_reason"),
             "visual_change_applied": meta.get("visual_change_applied"),
+            "media_kind": meta.get("kind"),
+            "kind": meta.get("kind"),
+            "path": path,
+            "asset_id": meta.get("asset_id"),
         }
         if path:
+            from app.storyboard import compute_visual_information_id, enrich_beat_dict
+
             chain["selected_asset"] = {
                 "path": path,
                 "kind": meta.get("kind"),
@@ -123,6 +153,16 @@ def plan_and_fetch_scenes(
                 "asset_id": meta.get("asset_id"),
                 "metadata": meta.get("metadata"),
             }
+            # Asset-bound visual information id (crop/zoom share this)
+            chain["visual_information_id"] = compute_visual_information_id(
+                asset_id=str(meta.get("asset_id") or "") or None,
+                entity=(beat.primary_entities[0] if beat.primary_entities else ""),
+                concept=beat.concept,
+                evidence_role=beat.evidence_role,
+                required_visual_concept=beat.required_visual_concept,
+                media_kind=str(meta.get("kind") or ""),
+            )
+            chain = enrich_beat_dict(chain)
             prev_accepted = {
                 "path": path,
                 "kind": meta.get("kind"),
@@ -174,6 +214,200 @@ def plan_and_fetch_scenes(
         _save_used_clip_ids(state_path, used_ids.union(newly_used))
 
     if stats_out is not None:
+        from app.no_slideshow_gate import (
+            evaluate_no_slideshow,
+            visual_information_units_from_shots,
+        )
+        from app.beat_recovery import (
+            build_all_beat_coverage,
+            recover_uncovered_beat,
+        )
+        from app.story_domains import (
+            analyze_source_assets,
+            build_beat_research_requirement,
+        )
+        from app.storyboard import analyze_storyboard_coverage, storyboard_before_retrieval
+
+        # Decision-first storyboard snapshot (from final script text)
+        pre_board = [
+            s.to_dict()
+            for s in storyboard_before_retrieval(script or topic or "", topic=topic)
+        ]
+        # Beat coverage recovery ladder (never silent unrelated prior-asset fill)
+        coverage_rows = build_all_beat_coverage(word_to_visual, topic=topic)
+        verified_facts = []
+        if isinstance(script_data, dict):
+            sq = script_data.get("script_quality") or {}
+            verified_facts = list(sq.get("replacement_research") or [])
+        recovery_log: list[dict] = []
+        used_queries_global: set[str] = set()
+        for cov in coverage_rows:
+            if cov.importance != "important" or cov.status != "UNCOVERED":
+                continue
+            if len(recovery_log) >= 4:
+                break
+            idx = int(cov.beat_id) if str(cov.beat_id).isdigit() else -1
+            if idx < 0 or idx >= len(beats):
+                # resolve by matching index in word_to_visual
+                try:
+                    idx = next(
+                        i
+                        for i, b in enumerate(word_to_visual)
+                        if str(b.get("beat") if b.get("beat") is not None else i)
+                        == str(cov.beat_id)
+                    )
+                except StopIteration:
+                    continue
+            beat = beats[idx]
+            beat.visual_change = "new_asset"
+            duration = beat.resolve_duration_hint(
+                default=min(float(clip_duration), 2.0)
+            )
+
+            def _mat(b, **kwargs):
+                return _materialize_beat(b, **kwargs)
+
+            path, meta, cov_out = recover_uncovered_beat(
+                beat,
+                topic=topic,
+                coverage=cov,
+                materialize_fn=_mat,
+                output_dir=out_dir,
+                media_dir=media_dir,
+                clip_index=idx,
+                clip_duration=duration,
+                ai_budget_left=max(0, ai_budget - ai_used),
+                exclude_ids=used_ids.union(newly_used),
+                recent_fps=recent_fps,
+                recent_blobs=recent_blobs,
+                person_log=person_retrieval_log,
+                verified_facts=verified_facts,
+                used_queries=used_queries_global,
+            )
+            for a in cov_out.attempts:
+                if a.get("query"):
+                    used_queries_global.add(str(a["query"]).lower())
+            recovery_log.append(
+                {
+                    "beat_id": cov_out.beat_id,
+                    "importance": cov_out.importance,
+                    "status": cov_out.status,
+                    "failure_reason": cov_out.failure_reason,
+                    "attempts": cov_out.attempts,
+                    "providers_tried": cov_out.providers_tried,
+                    "motion_graphic_attempted": cov_out.motion_graphic_attempted,
+                    "evidence_visual_used": cov_out.evidence_visual_used,
+                    "accepted": bool(path),
+                }
+            )
+            for ci, c in enumerate(coverage_rows):
+                if str(c.beat_id) == str(cov.beat_id):
+                    coverage_rows[ci] = cov_out
+                    break
+            if path:
+                from app.storyboard import compute_visual_information_id, enrich_beat_dict
+
+                chain = {
+                    **beat.word_to_visual_skeleton(),
+                    "duration": duration,
+                    "rejected_candidates": [
+                        a
+                        for a in (meta.get("attempts") or [])
+                        if a.get("rejection_reason")
+                    ],
+                    "candidates_considered": len(meta.get("attempts") or []),
+                    "selected_asset": {
+                        "path": path,
+                        "kind": meta.get("kind"),
+                        "provider": meta.get("provider") or meta.get("source"),
+                        "asset_id": meta.get("asset_id"),
+                        "metadata": meta.get("metadata"),
+                    },
+                    "relevance_score": meta.get("score"),
+                    "entity_score": meta.get("entity_score"),
+                    "specificity_score": meta.get("specificity_score"),
+                    "gate_reason": meta.get("gate_reason"),
+                    "visual_change_applied": meta.get("visual_change_applied")
+                    or "new_asset",
+                    "media_kind": meta.get("kind"),
+                    "kind": meta.get("kind"),
+                    "path": path,
+                    "asset_id": meta.get("asset_id"),
+                    "coverage_recovery": True,
+                    "recovery_attempts": cov_out.attempts,
+                    "beat_coverage": cov_out.to_dict(),
+                }
+                chain["visual_information_id"] = compute_visual_information_id(
+                    asset_id=str(meta.get("asset_id") or "") or None,
+                    entity=(beat.primary_entities[0] if beat.primary_entities else ""),
+                    concept=beat.concept,
+                    evidence_role=beat.evidence_role,
+                    required_visual_concept=beat.required_visual_concept,
+                    media_kind=str(meta.get("kind") or ""),
+                )
+                cov_out.selected_visual_information_id = chain["visual_information_id"]
+                chain = enrich_beat_dict(chain)
+                word_to_visual[idx] = chain
+                aid = meta.get("asset_id")
+                if aid is not None and meta.get("provider") and meta.get("provider") not in {
+                    "motion_graphic",
+                    "ai_image",
+                }:
+                    from app.stock_media import _clip_id
+
+                    newly_used.append(_clip_id(str(meta["provider"]), aid))
+                if meta.get("kind") in {"ai_image", "motion_graphic"}:
+                    ai_used += 1
+                fp = asset_fingerprint(
+                    provider=str(meta.get("provider") or ""),
+                    asset_id=str(meta.get("asset_id") or "") or None,
+                )
+                if fp:
+                    recent_fps.append(fp)
+
+        # Rebuild clip list from word_to_visual (beat-aligned; no silent filler pads)
+        clip_paths = []
+        for b in word_to_visual:
+            p = b.get("path") or (b.get("selected_asset") or {}).get("path")
+            if p:
+                clip_paths.append(str(p))
+
+        # Rebuild coverage after recovery
+        coverage_rows = build_all_beat_coverage(word_to_visual, topic=topic)
+        # Merge attempt diagnostics from recovery_log into rows
+        by_id = {str(r["beat_id"]): r for r in recovery_log}
+        for i, row in enumerate(coverage_rows):
+            extra = by_id.get(str(row.beat_id))
+            if extra:
+                row.attempts = extra.get("attempts") or row.attempts
+                row.providers_tried = extra.get("providers_tried") or row.providers_tried
+                row.motion_graphic_attempted = bool(
+                    extra.get("motion_graphic_attempted")
+                )
+                row.evidence_visual_used = bool(extra.get("evidence_visual_used"))
+                if row.status == "UNCOVERED" and extra.get("failure_reason"):
+                    row.failure_reason = str(extra["failure_reason"])
+                coverage_rows[i] = row
+
+        coverage = analyze_storyboard_coverage(word_to_visual)
+        source_stats = analyze_source_assets(word_to_visual)
+        beat_reqs = [
+            r.to_dict()
+            for i, b in enumerate(word_to_visual)
+            if (r := build_beat_research_requirement(b, index=i, topic=topic))
+        ]
+        sc = (stats_out or {}).get("story_consistency") or {}
+        gate = evaluate_no_slideshow(
+            word_to_visual,
+            retention_events=[
+                e.to_dict() if hasattr(e, "to_dict") else e for e in retention_events
+            ],
+            topic=topic,
+            story_consistency=sc,
+            beat_coverage=[c.to_dict() for c in coverage_rows],
+            recovery_log=recovery_log,
+        )
+        vius = visual_information_units_from_shots(word_to_visual)
         total = len(clip_paths)
         stats_out.update(
             {
@@ -192,6 +426,25 @@ def plan_and_fetch_scenes(
                 "beat_count": len(beats),
                 "clip_count": total,
                 "priority": list(DIRECTOR_PRIORITY),
+                "retention_events": [
+                    e.to_dict() if hasattr(e, "to_dict") else e
+                    for e in retention_events
+                ],
+                "person_retrieval": person_retrieval_log,
+                "storyboard_before_retrieval": pre_board,
+                "storyboard_coverage": coverage.to_dict(),
+                "visual_information_units": vius,
+                "no_slideshow_gate": gate.to_dict(),
+                "source_asset_stats": source_stats,
+                "important_beat_coverage": [c.to_dict() for c in coverage_rows],
+                "beat_coverage": [c.to_dict() for c in coverage_rows],
+                "beat_research_requirements": beat_reqs,
+                "important_beat_retry": recovery_log,
+                "beat_recovery": recovery_log,
+                "shot_count": source_stats.get("shot_count"),
+                "unique_source_asset_count": source_stats.get(
+                    "unique_source_asset_count"
+                ),
             }
         )
 
@@ -260,6 +513,8 @@ def _materialize_beat(
     prev_accepted: dict[str, Any] | None = None,
     recent_fps: list[str] | None = None,
     recent_blobs: list[str] | None = None,
+    media_dir: Path | None = None,
+    person_log: list | None = None,
 ) -> tuple[str | None, dict[str, Any]]:
     """Entity-first retrieval ladder + Phase 1 quality gate on every candidate.
 
@@ -285,7 +540,26 @@ def _materialize_beat(
 
     # Same good asset + new framing — only when entity continuity AND not an
     # exact short-window duplicate without a named-entity requirement change.
-    if beat.wants_reuse_visual_change() and prev_accepted and prev_accepted.get("path"):
+    # Important distinct beats must run their own retrieval ladder.
+    important_roles = {
+        "hook",
+        "entity_proof",
+        "document",
+        "money",
+        "place",
+        "cta",
+    }
+    important_evidence = {"archive", "proof", "document", "location", "contrast"}
+    force_fresh = (
+        beat.narrative_role in important_roles
+        or beat.evidence_role in important_evidence
+    )
+    if (
+        beat.wants_reuse_visual_change()
+        and prev_accepted
+        and prev_accepted.get("path")
+        and not force_fresh
+    ):
         prev_ents = {e.lower() for e in (prev_accepted.get("entities") or [])}
         cur_ents = {e.lower() for e in (beat.primary_entities or beat.must_show)}
         prev_fp = asset_fingerprint(
@@ -316,6 +590,9 @@ def _materialize_beat(
                 last_meta["beat"] = beat.to_meta()
                 last_meta["attempts"] = attempts
                 return path, last_meta
+    elif force_fresh and beat.wants_reuse_visual_change():
+        # Override retention-forced reuse — retrieve a new source asset
+        beat.visual_change = "new_asset"
 
     raw_queries = beat.entity_first_queries(topic=topic)
     queries = []
@@ -329,7 +606,19 @@ def _materialize_beat(
         else:
             queries.append(enrich_stock_query(q, topic=topic))
     queries = queries or [enrich_stock_query(topic, topic=topic)]
+    # Cap query fan-out — long ladders + Pexels 429 = multi-hour hangs
+    queries = queries[:3]
     kinds = beat.kind_chain()
+    # Ownership / evidence beats: still/archive first; skip video spam under rate limits
+    if beat.evidence_role in {"proof", "document", "archive"} or beat.concept in {
+        "ownership",
+        "foundation",
+    }:
+        kinds = [k for k in kinds if k != "stock_video"]
+        if "stock_photo" not in kinds:
+            kinds = ["stock_photo"] + kinds
+        if not kinds:
+            kinds = ["stock_photo", "ai_image"]
     last_meta["query"] = queries[0]
 
     need = scene_need_from_plan(
@@ -351,6 +640,75 @@ def _materialize_beat(
             need.must_show = extracted
             need.required_entities = extracted
             need.entity_specific = True
+
+    # Phase 3.1: person archive BEFORE generic stock (portrait ≫ storefront).
+    from app.person_archive import looks_like_person_name, try_cached_or_fetch_person_image
+
+    person_ents = [
+        e
+        for e in (beat.primary_entities or beat.must_show or [])
+        if looks_like_person_name(e)
+    ]
+    cache_root = media_dir or output_dir
+    for pe in person_ents[:1]:
+        # Person portrait need must NOT require co-mentioned orgs (Foundation),
+        # or the correct portrait fails missing_required_entities / below_threshold.
+        person_need = scene_need_from_plan(
+            queries=[f"{pe} portrait archive", pe],
+            must_show=[pe],
+            required_entities=[pe],
+            avoid=list(beat.avoid or []),
+            scene_type="entity_proof",
+            visual_intent=f"Archive / real-world portrait of {pe}",
+            narrative_role="entity_proof",
+        )
+        cand, pmeta, gate = try_cached_or_fetch_person_image(
+            pe, media_dir=cache_root, need=person_need, attempts=attempts
+        )
+        from_cache = bool(
+            pmeta and pmeta.get("validated") and pmeta.get("entity_key")
+        )
+        entry = {
+            "entity": pe,
+            "attempted": True,
+            "accepted": False,
+            "provider": (pmeta or {}).get("provider"),
+            "asset_id": (pmeta or {}).get("asset_id"),
+            "page_title": (pmeta or {}).get("title"),
+            "rejection_reason": None
+            if (gate and getattr(gate, "accepted", False))
+            else (getattr(gate, "reason", None) if gate else "no_candidate"),
+            "source": "person_cache" if from_cache else "wikipedia",
+        }
+        if person_log is not None:
+            person_log.append(entry)
+        if cand and gate and gate.accepted and cand.download_url:
+            path, meta = _download_person_archive_clip(
+                cand,
+                pmeta or {},
+                gate,
+                output_dir=output_dir,
+                clip_index=clip_index,
+                clip_duration=clip_duration,
+                motion=beat.motion,
+            )
+            if path:
+                entry["accepted"] = True
+                entry["rejection_reason"] = None
+                entry["clip_path"] = path
+                last_meta = {
+                    **last_meta,
+                    **meta,
+                    "kind": "stock_photo",
+                    "query": pe,
+                    "attempts": attempts,
+                    "beat": beat.to_meta(),
+                    "person_archive": True,
+                    "accepted": True,
+                }
+                return path, last_meta
+            entry["accepted"] = False
+            entry["rejection_reason"] = (meta or {}).get("gate_reason") or "person_clip_failed"
 
     for kind in kinds:
         if kind == "ai_image" and (
@@ -408,6 +766,74 @@ def _materialize_beat(
 
     last_meta["fallback_reason"] = "no_gated_asset"
     return None, last_meta
+
+
+def _download_person_archive_clip(
+    cand: AssetCandidate,
+    pmeta: dict[str, Any],
+    gate: Any,
+    *,
+    output_dir: Path,
+    clip_index: int,
+    clip_duration: float,
+    motion: str = "slow_push",
+) -> tuple[str | None, dict[str, Any]]:
+    """Download gated Wikipedia/Commons portrait → Ken Burns clip."""
+    from app.ai_visuals import image_to_motion_clip
+    from app.http_client import session
+
+    img = output_dir / f"person_archive_{clip_index}.jpg"
+    dest = output_dir / f"clip_{clip_index}.mp4"
+    url = str(cand.download_url or "").split("?")[0]  # drop utm tracking
+    try:
+        resp = session.get(
+            url or cand.download_url,
+            timeout=25,
+            headers={
+                "User-Agent": "sosyal-medya-otomasyon/phase31 (person-archive; contact=local)",
+                "Accept": "image/*,*/*",
+                "Referer": "https://en.wikipedia.org/",
+            },
+        )
+        if resp.status_code != 200:
+            return None, {
+                "source": "miss",
+                "gate_reason": f"person_download_http_{resp.status_code}",
+            }
+        data = resp.content
+        if len(data) <= 1024 or b"<html" in data[:200].lower():
+            return None, {"source": "miss", "gate_reason": "person_download_too_small"}
+        img.write_bytes(data)
+        digest = hashlib.sha1(data).hexdigest()[:16]
+        kb = _motion_to_kenburns(motion)
+        if kb not in {"zoom_in", "zoom_out", "punch_in"}:
+            kb = "zoom_in"
+        image_to_motion_clip(img, dest, duration=clip_duration, motion_type=kb)
+    except Exception as exc:
+        logger.warning("person archive clip failed: %s", exc)
+        return None, {"source": "miss", "gate_reason": f"person_clip_error:{exc}"}
+    if not dest.is_file():
+        return None, {"source": "miss", "gate_reason": "person_clip_missing"}
+    return str(dest), {
+        "kind": "stock_photo",
+        "source": cand.provider,
+        "provider": cand.provider,
+        "asset_id": cand.asset_id,
+        "score": getattr(gate, "relevance_score", 0.9),
+        "entity_score": getattr(gate, "entity_score", 0.9),
+        "specificity_score": getattr(gate, "specificity_score", 0.85),
+        "gate_reason": "person_archive_accepted",
+        "still_path": str(img),
+        "metadata": {
+            "title": cand.title,
+            "url": cand.url,
+            "tags": cand.tags,
+            "description": cand.description,
+            "attribution": pmeta.get("attribution"),
+            "page_url": pmeta.get("page_url"),
+            "content_hash": digest,
+        },
+    }
 
 
 def _motion_to_kenburns(motion: str) -> str:
@@ -572,7 +998,9 @@ def _try_stock_video_gated(
         )
         pen = reuse_penalty(fp, recent_fps)
         nov = novelty_bonus(cand.metadata_blob(), recent_blobs)
-        score = selection_score(gate, reuse_pen=pen, novelty=nov)
+        # Source novelty: new fingerprint beats reused when relevance is similar
+        sn = 0.12 if fp and reuse_penalty(fp, recent_fps) < 0.15 else 0.0
+        score = selection_score(gate, reuse_pen=pen, novelty=nov, source_novelty=sn)
         attempt = {
             "kind": "stock_video",
             "query": query,
@@ -584,6 +1012,7 @@ def _try_stock_video_gated(
             "specificity_score": gate.specificity_score,
             "selection_score": score,
             "reuse_penalty": pen,
+            "source_novelty": sn,
             "rejection_reason": None if gate.accepted else gate.reason,
             "forbidden_hit": gate.forbidden_hit,
         }
@@ -716,7 +1145,8 @@ def _try_stock_photo_gated(
         )
         pen = reuse_penalty(fp, recent_fps)
         nov = novelty_bonus(cand.metadata_blob(), recent_blobs)
-        score = selection_score(gate, reuse_pen=pen, novelty=nov)
+        sn = 0.12 if fp and reuse_penalty(fp, recent_fps) < 0.15 else 0.0
+        score = selection_score(gate, reuse_pen=pen, novelty=nov, source_novelty=sn)
         attempts.append(
             {
                 "kind": "stock_photo",
@@ -729,6 +1159,7 @@ def _try_stock_photo_gated(
                 "specificity_score": gate.specificity_score,
                 "selection_score": score,
                 "reuse_penalty": pen,
+                "source_novelty": sn,
                 "rejection_reason": None if gate.accepted else gate.reason,
                 "forbidden_hit": gate.forbidden_hit,
             }

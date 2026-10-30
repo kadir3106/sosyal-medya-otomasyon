@@ -85,6 +85,8 @@ def _evidence_role(beat: StoryBeat, purpose: str) -> str:
         return "EVIDENCE_REQUIRED"
     if purpose == "SHOW_PERSON" and _importance(beat) == "important":
         return "AUTHENTIC_CONTEXT_REQUIRED"
+    if purpose == "SHOW_PROCESS" and beat.primary_entities and _importance(beat) == "important":
+        return "AUTHENTIC_CONTEXT_REQUIRED"
     if purpose in {"SHOW_PROCESS", "SHOW_PRODUCT", "SHOW_LOCATION", "IDENTIFY_ENTITY", "CREATE_PAYOFF"}:
         return "ILLUSTRATION_ACCEPTABLE"
     if purpose == "ESTABLISH_CONTEXT":
@@ -111,8 +113,9 @@ def _strict(beat: StoryBeat, purpose: str) -> bool:
     if purpose == "EXPLAIN_RELATIONSHIP":
         return False  # relationship often recovered via verified graphic
     if purpose == "SHOW_PROCESS":
-        # Process B-roll may be authentic craft without brand logo on every frame
-        return False
+        # Important named-entity process claims must not be silently satisfied by
+        # generic category B-roll. Supporting process beats may still illustrate.
+        return bool(beat.primary_entities and _importance(beat) == "important")
     if purpose in {"SHOW_PRODUCT", "CREATE_PAYOFF"} and beat.primary_entities and _importance(beat) == "important":
         return True
     return False
@@ -183,8 +186,10 @@ class DocumentaryShotDirector:
             if beat.importance in {"important", "supporting", "fragment"}
             else _importance(beat)
         )
-        # Process craft footage may be authentic without brand logo on every frame
-        if purpose == "SHOW_PROCESS":
+        strict = _strict(beat, purpose)
+        # Supporting process craft footage may be authentic without a brand logo.
+        # Important named-entity process beats retain the entity requirement.
+        if purpose == "SHOW_PROCESS" and not strict:
             req_entities: list[str] = []
             opt_entities = list(entities) + list(beat.secondary_entities or [])
         else:
@@ -213,7 +218,7 @@ class DocumentaryShotDirector:
             motion_requirement=motion,
             authenticity_requirement=beat.authenticity_requirement
             or ("AUTHENTIC_ARCHIVE" if purpose == "SHOW_PERSON" else ""),
-            strict_entity_mode=_strict(beat, purpose),
+            strict_entity_mode=strict,
             generation_allowed=purpose in {"EXPLAIN_RELATIONSHIP", "SHOW_EVIDENCE", "ESTABLISH_CONTEXT"},
             forbidden_visual_concepts=_forbidden(beat, purpose),
             search_intents=[],  # filled by query compiler

@@ -18,6 +18,7 @@ class PipelineMode(str, Enum):
     LEGACY_STOCK = "LEGACY_STOCK"
     LEGACY_DIRECTOR = "LEGACY_DIRECTOR"
     DOCUMENTARY_V2 = "DOCUMENTARY_V2"
+    DOCUMENTARY_V2_CANARY = "DOCUMENTARY_V2_CANARY"
 
 
 class LicenseState(str, Enum):

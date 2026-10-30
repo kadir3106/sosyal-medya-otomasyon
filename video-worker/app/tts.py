@@ -8,9 +8,40 @@ from app.http_client import session
 DEFAULT_VOICE = "en-US-GuyNeural"
 DEFAULT_ELEVEN_VOICE = "JBFqnCBsd6RMkjVDRZzb"  # George / Deep Storyteller
 
+_DEFAULT_VOICE_SETTINGS = {
+    "stability": 0.55,
+    "similarity_boost": 0.80,
+    "style": 0.25,
+    "use_speaker_boost": True,
+}
+
+
+def _merge_eleven_settings(voice_settings: dict | None) -> dict:
+    """Supported ElevenLabs voice_settings only — never invent keys like speed."""
+    out = dict(_DEFAULT_VOICE_SETTINGS)
+    if voice_settings:
+        for key in ("stability", "similarity_boost", "style", "use_speaker_boost"):
+            if key in voice_settings and voice_settings[key] is not None:
+                out[key] = voice_settings[key]
+    # Optional env overrides (Phase 3)
+    try:
+        if getattr(config, "ELEVENLABS_STABILITY", ""):
+            out["stability"] = float(config.ELEVENLABS_STABILITY)
+        if getattr(config, "ELEVENLABS_SIMILARITY", ""):
+            out["similarity_boost"] = float(config.ELEVENLABS_SIMILARITY)
+        if getattr(config, "ELEVENLABS_STYLE", ""):
+            out["style"] = float(config.ELEVENLABS_STYLE)
+    except (TypeError, ValueError):
+        pass
+    return out
+
 
 def _synthesize_elevenlabs(
-    text: str, output_path: str, api_key: str, voice_id: str | None = None
+    text: str,
+    output_path: str,
+    api_key: str,
+    voice_id: str | None = None,
+    voice_settings: dict | None = None,
 ) -> list[dict] | None:
     """ElevenLabs with-timestamps API ile stüdyo seslendirmesi ve kelime hizalaması alır."""
     voice = voice_id or config.ELEVENLABS_VOICE_ID or DEFAULT_ELEVEN_VOICE
@@ -22,12 +53,7 @@ def _synthesize_elevenlabs(
     payload = {
         "text": text,
         "model_id": "eleven_multilingual_v2",
-        "voice_settings": {
-            "stability": 0.55,
-            "similarity_boost": 0.80,
-            "style": 0.25,
-            "use_speaker_boost": True,
-        },
+        "voice_settings": _merge_eleven_settings(voice_settings),
     }
 
     try:
@@ -93,21 +119,38 @@ async def synthesize_speech(
     voice: str = DEFAULT_VOICE,
     rate: str | None = None,
     meta_out: dict | None = None,
+    voice_settings: dict | None = None,
 ) -> list[dict]:
     """Synthesize speech; optionally fill meta_out with provider telemetry.
 
     meta_out keys when provided:
       - provider: "elevenlabs" | "edge"
       - edge_reason: set when Edge is used (missing_key | elevenlabs_failed)
+      - voice_settings: settings actually requested (Phase 3)
     """
+    settings = voice_settings
+    if settings is None and getattr(config, "PHASE3_AUDIO_ENABLED", False):
+        # Mild documentary defaults when Phase 3 on but no profile passed.
+        settings = {
+            "stability": 0.48,
+            "similarity_boost": 0.82,
+            "style": 0.35,
+            "use_speaker_boost": True,
+        }
+
     # 1. ElevenLabs API anahtarı tanımlıysa öncelikle sinematik ses üretmeyi dene
     if config.ELEVENLABS_API_KEY:
         eleven_words = _synthesize_elevenlabs(
-            text, output_path, config.ELEVENLABS_API_KEY, config.ELEVENLABS_VOICE_ID
+            text,
+            output_path,
+            config.ELEVENLABS_API_KEY,
+            config.ELEVENLABS_VOICE_ID,
+            voice_settings=settings,
         )
         if eleven_words:
             if meta_out is not None:
                 meta_out["provider"] = "elevenlabs"
+                meta_out["voice_settings"] = _merge_eleven_settings(settings)
             return eleven_words
         edge_reason = "elevenlabs_failed"
         print(
@@ -153,4 +196,3 @@ async def synthesize_speech(
         meta_out["provider"] = "edge"
         meta_out["edge_reason"] = edge_reason
     return word_boundaries
-

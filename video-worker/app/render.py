@@ -179,7 +179,7 @@ def plan_scene_schedule(
             durations[i] = max(durations[i], RHYTHM_TAIL_DURATION)
 
         # Son sahneyi tam ses süresine oturt: video ne uzun ne kısa kalsın
-        # (fazlalık `-shortest` ile kesilip boşa render ediliyordu).
+        # Trim last scene so covered timeline ≈ audio (avoid overshoot encode).
         overshoot = _covered_duration(durations, xfade_duration) - audio_duration
         if overshoot > 0:
             durations[-1] = max(MIN_SCENE_DURATION, durations[-1] - overshoot)
@@ -288,6 +288,11 @@ def render_video(
     apply_zoompan: bool = True,
     max_scenes: int | None = None,
     stats_out: dict | None = None,
+    *,
+    duck_bgm: bool = False,
+    duck_threshold: float = 0.02,
+    duck_ratio: float = 6.0,
+    loudnorm: bool = False,
 ) -> str:
     if not clip_paths:
         raise ValueError("render_video needs at least one clip")
@@ -334,20 +339,20 @@ def render_video(
     labels: list[str] = []
     for i, (clip, seek) in enumerate(sources):
         is_image = Path(clip).suffix.lower() in IMAGE_SUFFIXES
-        # Klibin farklı bir anından başla (tekrar kullanımda bile yeni kare).
-        if seek > 0 and not is_image:
-            inputs += ["-ss", f"{seek:.2f}", "-i", clip]
+        scene_duration = durations[i]
+        # Loop short demux inputs so scene trim can always fill scene_duration.
+        # (Director still→mp4 clips are often ~2.2s while scenes stretch to ~6s;
+        #  tpad+xfade was dropping padded frames — stream_loop matches split_screen.)
+        if is_image:
+            inputs += ["-loop", "1", "-i", clip]
+        elif seek > 0:
+            inputs += ["-stream_loop", "-1", "-ss", f"{seek:.2f}", "-i", clip]
         else:
-            inputs += ["-i", clip]
+            inputs += ["-stream_loop", "-1", "-i", clip]
 
         label = f"[v{i}]"
-        scene_duration = durations[i]
-        # tpad: kısa/seek edilmiş kaynakta bile trim'in dolmasını garanti eder.
-        tail = (
-            f"trim=duration={scene_duration},setpts=PTS-STARTPTS,"
-            f"tpad=stop_mode=clone:stop_duration={scene_duration},"
-            f"trim=duration={scene_duration},setpts=PTS-STARTPTS,fps={FPS}"
-        )
+        # Endless/looped input + hard trim to scene length (no tpad dependency).
+        tail = f"trim=duration={scene_duration},setpts=PTS-STARTPTS,fps={FPS}"
         if is_image:
             chain = f"[{i}:v]{normalize},{zoompan},{tail}"
         elif apply_zoompan:
@@ -377,36 +382,104 @@ def render_video(
     video_input_count = len(sources)
     inputs += ["-i", audio_path]
 
-    audio_layers = [f"[{video_input_count}:a]volume=1.0[aspeech]"]
-    mix_sources = ["[aspeech]"]
-
+    has_sfx = bool(sfx_path and Path(sfx_path).is_file())
+    has_bgm = bool(bgm_path and Path(bgm_path).is_file())
     next_audio_idx = video_input_count + 1
+    sfx_idx = None
+    bgm_idx = None
 
-    if sfx_path and Path(sfx_path).is_file():
+    if has_sfx:
         inputs += ["-i", sfx_path]
-        audio_layers.append(f"[{next_audio_idx}:a]volume=0.35[asfx]")
-        mix_sources.append("[asfx]")
+        sfx_idx = next_audio_idx
         next_audio_idx += 1
-
-    if bgm_path and Path(bgm_path).is_file():
+    if has_bgm:
         inputs += ["-i", bgm_path]
-        audio_layers.append(
-            f"[{next_audio_idx}:a]volume={bgm_volume},aloop=loop=-1:size=2e+09[abgm]"
-        )
-        mix_sources.append("[abgm]")
+        bgm_idx = next_audio_idx
         next_audio_idx += 1
 
-    if len(mix_sources) > 1:
-        mix_str = "".join(mix_sources)
+    speech_in = f"[{video_input_count}:a]"
+    audio_layers: list[str] = []
+    if duck_bgm and has_bgm:
+        # VO-priority ducking: sidechaincompress so BGM dips under narration.
+        # Speech split → dry voice + sidechain key. Soft ratio avoids pumping.
+        thr = max(0.008, min(0.08, float(duck_threshold)))
+        ratio = max(2.0, min(12.0, float(duck_ratio)))
         audio_layers.append(
-            f"{mix_str}amix=inputs={len(mix_sources)}:duration=first:dropout_transition=2[afinal]"
+            f"{speech_in}asplit=2[speechdry][speechsc]"
         )
+        audio_layers.append(
+            f"[{bgm_idx}:a]volume={bgm_volume},aloop=loop=-1:size=2e+09[bgmraw]"
+        )
+        audio_layers.append(
+            f"[bgmraw][speechsc]sidechaincompress="
+            f"threshold={thr}:ratio={ratio}:attack=40:release=280:"
+            f"makeup=1:knee=2.5[bgmduck]"
+        )
+        mix_parts = ["[speechdry]", "[bgmduck]"]
+        if has_sfx:
+            audio_layers.append(f"[{sfx_idx}:a]volume=0.28[asfx]")
+            mix_parts.append("[asfx]")
+        mix_str = "".join(mix_parts)
+        n = len(mix_parts)
+        audio_layers.append(
+            f"{mix_str}amix=inputs={n}:duration=first:dropout_transition=2:normalize=0[amixed]"
+        )
+        if loudnorm:
+            audio_layers.append(
+                "[amixed]loudnorm=I=-14:TP=-1.5:LRA=11:print_format=summary[afinal]"
+            )
+        else:
+            audio_layers[-1] = audio_layers[-1].replace("[amixed]", "[afinal]")
         filter_parts.extend(audio_layers)
         audio_map = ["-map", "[afinal]"]
+    elif has_sfx or has_bgm:
+        audio_layers.append(f"{speech_in}volume=1.0[aspeech]")
+        mix_sources = ["[aspeech]"]
+        if has_sfx:
+            audio_layers.append(f"[{sfx_idx}:a]volume=0.35[asfx]")
+            mix_sources.append("[asfx]")
+        if has_bgm:
+            audio_layers.append(
+                f"[{bgm_idx}:a]volume={bgm_volume},aloop=loop=-1:size=2e+09[abgm]"
+            )
+            mix_sources.append("[abgm]")
+        mix_str = "".join(mix_sources)
+        audio_layers.append(
+            f"{mix_str}amix=inputs={len(mix_sources)}:duration=first:dropout_transition=2[amixed]"
+        )
+        if loudnorm:
+            audio_layers.append(
+                "[amixed]loudnorm=I=-14:TP=-1.5:LRA=11:print_format=summary[afinal]"
+            )
+            filter_parts.extend(audio_layers)
+            audio_map = ["-map", "[afinal]"]
+        else:
+            audio_layers[-1] = audio_layers[-1].replace("[amixed]", "[afinal]")
+            filter_parts.extend(audio_layers)
+            audio_map = ["-map", "[afinal]"]
     else:
         audio_map = ["-map", f"{video_input_count}:a:0"]
 
+    if stats_out is not None:
+        stats_out["duck_bgm"] = bool(duck_bgm and has_bgm)
+        stats_out["bgm_volume"] = float(bgm_volume) if has_bgm else 0.0
+        stats_out["loudnorm"] = bool(loudnorm)
+
     filter_complex = ";".join(filter_parts)
+
+    # Planned visual timeline after xfade overlaps (driven by audio schedule).
+    timeline_duration = _covered_duration(durations, xfade_duration)
+    # IMPORTANT: do NOT use `-shortest`.
+    # FFmpeg `-shortest` finishes when the shortest *input demux* stream ends.
+    # Director still→motion clips are typically SCENE_CLIP_DURATION (~2.2s) files;
+    # even with filtergraph trim/pad, `-shortest` aborts at the first short clip
+    # and truncates narration to ~2.2s.
+    # Inputs are `-stream_loop`-ed (or `-loop` for stills) and output is capped
+    # with `-t` on the intended timeline (same idea as split_screen `-t audio_dur`).
+    output_duration = max(float(timeline_duration), float(audio_duration))
+    if stats_out is not None:
+        stats_out["timeline_duration"] = round(timeline_duration, 3)
+        stats_out["output_duration"] = round(output_duration, 3)
 
     cmd = [
         "ffmpeg", "-y",
@@ -417,7 +490,7 @@ def render_video(
         "-c:a", "aac", "-b:a", "128k",
         "-pix_fmt", "yuv420p",
         "-r", str(FPS),
-        "-shortest",
+        "-t", f"{output_duration:.3f}",
         output_path,
     ]
 

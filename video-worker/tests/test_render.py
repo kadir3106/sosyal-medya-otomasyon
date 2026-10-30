@@ -1,5 +1,7 @@
 from unittest.mock import patch, Mock
 
+import subprocess
+
 import pytest
 
 from app.render import (
@@ -365,4 +367,171 @@ def test_render_stock_video_uses_live_kenburns_not_freeze_zoompan(
     joined = " ".join(mock_run.call_args.args[0])
     assert "zoompan=" not in joined
     assert "eval=frame" in joined
+
+
+@patch("app.render.get_audio_duration", return_value=8.0)
+@patch("app.render.subprocess.run")
+def test_render_video_uses_timeline_t_not_shortest(mock_run, mock_duration, tmp_path):
+    """Mux must pin `-t` to planned timeline — never `-shortest` (short clip inputs)."""
+    mock_run.return_value = Mock(returncode=0, stdout="", stderr="")
+    clip = tmp_path / "clip_0.mp4"
+    clip.write_bytes(b"A")
+    (tmp_path / "subs.ass").write_text("[Script Info]\nScriptType: v4.00+\n", encoding="utf-8")
+
+    stats: dict = {}
+    render_video(
+        [str(clip)],
+        str(tmp_path / "speech.mp3"),
+        str(tmp_path / "subs.ass"),
+        str(tmp_path / "out.mp4"),
+        str(tmp_path),
+        clip_duration=2.2,
+        xfade_duration=0.4,
+        cinematic_grade=False,
+        apply_zoompan=False,
+        stats_out=stats,
+    )
+
+    cmd = mock_run.call_args.args[0]
+    assert "-shortest" not in cmd
+    assert "-t" in cmd
+    assert cmd.count("-stream_loop") >= 1
+    t_idx = cmd.index("-t")
+    out_t = float(cmd[t_idx + 1])
+    assert stats["timeline_duration"] > 2.2
+    assert out_t == pytest.approx(stats["output_duration"], abs=0.01)
+    assert out_t == pytest.approx(max(stats["timeline_duration"], 8.0), abs=0.05)
+
+
+def _ffmpeg_make_silent_clip(path, duration: float, *, color: str = "c=black:s=320x240") -> None:
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            f"color={color}:d={duration}",
+            "-pix_fmt",
+            "yuv420p",
+            "-t",
+            str(duration),
+            str(path),
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+
+def _ffmpeg_make_silent_audio(path, duration: float) -> None:
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            f"anullsrc=r=44100:cl=mono",
+            "-t",
+            str(duration),
+            str(path),
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+
+def _ffprobe_duration(path) -> float:
+    out = subprocess.check_output(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=nw=1:nk=1",
+            str(path),
+        ],
+        text=True,
+    ).strip()
+    return float(out)
+
+
+def test_render_video_final_duration_not_truncated_by_short_clip_inputs(tmp_path):
+    """Regression: short still-derived clip inputs must not truncate long timeline.
+
+    Before fix, `-shortest` ended at the first ~2.2s demux input even when the
+    planned audio-driven timeline was ~6s. Fix: `-stream_loop` + `-t timeline`.
+    """
+    import shutil
+
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        pytest.skip("ffmpeg/ffprobe required")
+
+    clip_a = tmp_path / "clip_a.mp4"
+    clip_b = tmp_path / "clip_b.mp4"
+    audio = tmp_path / "speech.wav"
+    ass = tmp_path / "subs.ass"
+    out = tmp_path / "final.mp4"
+
+    short = 1.0
+    audio_dur = 6.0
+    _ffmpeg_make_silent_clip(clip_a, short, color="c=red:s=320x240")
+    _ffmpeg_make_silent_clip(clip_b, short, color="c=blue:s=320x240")
+    _ffmpeg_make_silent_audio(audio, audio_dur)
+    ass.write_text(
+        "[Script Info]\nScriptType: v4.00+\n\n"
+        "[V4+ Styles]\n"
+        "Style: Default,Arial,40,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,"
+        "0,0,0,0,100,100,0,0,1,2,0,2,10,10,40,1\n\n"
+        "[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+        "Dialogue: 0,0:00:00.00,0:00:06.00,Default,,0,0,0,,test\n",
+        encoding="utf-8",
+    )
+
+    stats: dict = {}
+    render_video(
+        [str(clip_a), str(clip_b)],
+        str(audio),
+        str(ass),
+        str(out),
+        str(tmp_path / "work"),
+        clip_duration=2.2,
+        xfade_duration=0.4,
+        cinematic_grade=False,
+        apply_zoompan=False,
+        stats_out=stats,
+    )
+
+    final_dur = _ffprobe_duration(out)
+    intended = float(stats["timeline_duration"])
+    # Must track planned timeline / narration — not the short clip demux (~1s).
+    assert intended >= audio_dur - 0.35
+    assert final_dur == pytest.approx(intended, abs=0.35)
+    assert final_dur > short + 1.0
+    assert final_dur >= audio_dur - 0.35
+
+    # Video stream itself must cover the timeline (not audio-only container padding).
+    probe = subprocess.check_output(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=duration,nb_frames",
+            "-of",
+            "json",
+            str(out),
+        ],
+        text=True,
+    )
+    import json
+
+    v = json.loads(probe)["streams"][0]
+    v_dur = float(v.get("duration") or 0)
+    assert v_dur == pytest.approx(intended, abs=0.5)
 

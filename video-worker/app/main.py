@@ -73,6 +73,25 @@ async def _run_catch_up() -> None:
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
+    # Stage A: explicit pipeline_mode diagnostics — no silent LEGACY_STOCK ambiguity.
+    try:
+        from app.documentary_v2 import (
+            pipeline_mode_diagnostics,
+            warn_if_legacy_stock,
+        )
+
+        diag = pipeline_mode_diagnostics()
+        print(
+            f"[main] pipeline_mode={diag['pipeline_mode']} "
+            f"DOCUMENTARY_ENGINE_V2={diag['documentary_engine_v2']} "
+            f"DIRECTOR_ENABLED={diag['director_enabled']} "
+            f"VISUAL_ENGINE={diag['visual_engine']}",
+            flush=True,
+        )
+        warn_if_legacy_stock()
+    except Exception as exc:
+        print(f"[main] pipeline_mode diagnostics failed: {exc}", flush=True)
+
     tasks = []
     if config.TELEGRAM_BOT_TOKEN and config.TELEGRAM_CHAT_ID:
         offset_path = str(Path(config.MEDIA_DIR) / "telegram_offset.json")
@@ -156,7 +175,14 @@ class PublishRequest(BaseModel):
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    out = {"status": "ok"}
+    try:
+        from app.documentary_v2 import pipeline_mode_diagnostics
+
+        out["pipeline"] = pipeline_mode_diagnostics()
+    except Exception:
+        pass
+    return out
 
 
 @app.get("/health/tokens")

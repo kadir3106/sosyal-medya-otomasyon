@@ -1,0 +1,32 @@
+[
+  {
+    "topic": "Who owns LEGO and how did the Kirk Kristiansen family retain control?",
+    "story_type": "named_company_ownership",
+    "selection_rationale": "Tests named ownership, corporate sources, and entity-safe product visuals.",
+    "dimensions": ["entity", "document", "graphics"]
+  },
+  {
+    "topic": "How did Walt Disney found his animation studio?",
+    "story_type": "historical_founder_person",
+    "selection_rationale": "Tests a named person, archival attribution, and period-correct imagery.",
+    "dimensions": ["person", "archive", "document"]
+  },
+  {
+    "topic": "How are used glass bottles recycled into new bottles?",
+    "story_type": "physical_process",
+    "selection_rationale": "Tests step-by-step process footage and avoids treating generic factory scenes as evidence.",
+    "dimensions": ["process", "entity"]
+  },
+  {
+    "topic": "How did the Eiffel Tower become a permanent Paris landmark?",
+    "story_type": "historical_location",
+    "selection_rationale": "Tests place identity, historical archive material, and timeline graphics.",
+    "dimensions": ["location", "archive", "graphics"]
+  },
+  {
+    "topic": "How does a stock buyback change earnings per share?",
+    "story_type": "abstract_financial_mechanism",
+    "selection_rationale": "Tests source-bound abstract explanation and readable graphics without generic business B-roll.",
+    "dimensions": ["document", "graphics"]
+  }
+]

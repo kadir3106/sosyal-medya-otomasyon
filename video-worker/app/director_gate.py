@@ -553,14 +553,22 @@ def selection_score(
     *,
     reuse_pen: float = 0.0,
     novelty: float = 0.0,
+    source_novelty: float = 0.0,
 ) -> float:
-    """Rank accepted candidates: relevance + specificity − reuse + novelty."""
+    """Rank accepted candidates: relevance + specificity − reuse + novelty.
+
+    Source novelty is a tie-breaker — never outweighs relevance.
+    Between equally relevant candidates, prefer the one adding a new source asset.
+    """
     if not gate.accepted:
         return -1.0
+    # Cap source novelty so irrelevant novel clips cannot beat relevant reused ones
+    sn = max(0.0, min(0.12, float(source_novelty or 0.0)))
     return (
         0.40 * gate.relevance_score
         + 0.45 * gate.specificity_score
         + 0.15 * max(novelty, 0.0)
+        + sn
         - reuse_pen
         + min(novelty, 0.0)  # apply small negative novelty too
     )
