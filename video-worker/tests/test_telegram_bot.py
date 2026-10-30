@@ -14,7 +14,9 @@ def test_offset_round_trip(tmp_path):
 
 def test_handle_callback_approve_sends_summary(tmp_path):
     (tmp_path / "pending.json").write_text(
-        json.dumps({"kind": "video", "title": "T", "video_filename": "job1.mp4"}),
+        json.dumps(
+            {"job_id": "job1", "kind": "video", "title": "T", "video_filename": "job1.mp4"}
+        ),
         encoding="utf-8",
     )
 
@@ -28,7 +30,9 @@ def test_handle_callback_approve_sends_summary(tmp_path):
         }
 
     with patch("app.telegram_bot.send_message") as mock_send:
-        handle_callback("approve", str(tmp_path), "TOKEN", "123", publish_fn, lambda f: None)
+        handle_callback(
+            "approve:job1", str(tmp_path), "TOKEN", "123", publish_fn, lambda f: None
+        )
 
     text = mock_send.call_args.args[2]
     assert "✅ youtube" in text
@@ -37,20 +41,22 @@ def test_handle_callback_approve_sends_summary(tmp_path):
 
 def test_handle_callback_approve_no_pending_job(tmp_path):
     with patch("app.telegram_bot.send_message") as mock_send:
-        handle_callback("approve", str(tmp_path), "TOKEN", "123", lambda p: {}, lambda f: None)
+        handle_callback(
+            "approve:missing", str(tmp_path), "TOKEN", "123", lambda p: {}, lambda f: None
+        )
 
-    assert "Bekleyen iş yok" in mock_send.call_args.args[2]
+    assert "geçerli değil" in mock_send.call_args.args[2]
 
 
 def test_handle_callback_reject_calls_cleanup_and_notifies(tmp_path):
     (tmp_path / "pending.json").write_text(
-        json.dumps({"video_filename": "job2.mp4"}), encoding="utf-8"
+        json.dumps({"job_id": "job2", "video_filename": "job2.mp4"}), encoding="utf-8"
     )
     cleanup_calls = []
 
     with patch("app.telegram_bot.send_message") as mock_send:
         handle_callback(
-            "reject", str(tmp_path), "TOKEN", "123", lambda p: {}, cleanup_calls.append
+            "reject:job2", str(tmp_path), "TOKEN", "123", lambda p: {}, cleanup_calls.append
         )
 
     assert cleanup_calls == ["job2.mp4"]
@@ -59,7 +65,8 @@ def test_handle_callback_reject_calls_cleanup_and_notifies(tmp_path):
 
 def test_handle_callback_approve_all_failed_sends_retry_button(tmp_path):
     (tmp_path / "pending.json").write_text(
-        json.dumps({"title": "T", "video_filename": "job3.mp4"}), encoding="utf-8"
+        json.dumps({"job_id": "job3", "title": "T", "video_filename": "job3.mp4"}),
+        encoding="utf-8",
     )
 
     def publish_fn(payload):
@@ -68,7 +75,9 @@ def test_handle_callback_approve_all_failed_sends_retry_button(tmp_path):
         )
 
     with patch("app.telegram_bot.send_message") as mock_send:
-        handle_callback("approve", str(tmp_path), "TOKEN", "123", publish_fn, lambda f: None)
+        handle_callback(
+            "approve:job3", str(tmp_path), "TOKEN", "123", publish_fn, lambda f: None
+        )
 
     kwargs = mock_send.call_args.kwargs
     assert kwargs["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "retry:job3"
@@ -136,7 +145,9 @@ def test_handle_callback_pitch_generates_and_sends_preview(tmp_path):
     assert mock_send_video.called
     kwargs = mock_send_video.call_args.kwargs
     assert "onaylıyor musun" in kwargs["caption"].lower()
-    assert kwargs["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "approve"
+    assert (
+        kwargs["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "approve:"
+    )
 
 
 def test_handle_callback_approve_reads_job_store_without_mirror(tmp_path):
@@ -163,7 +174,55 @@ def test_handle_callback_approve_reads_job_store_without_mirror(tmp_path):
 
     with patch("app.telegram_bot.send_message") as mock_send:
         handle_callback(
-            "approve", str(tmp_path), "TOKEN", "123", publish_fn, lambda f: None
+            "approve:job-sqlite", str(tmp_path), "TOKEN", "123", publish_fn, lambda f: None
         )
 
     assert "✅ youtube" in mock_send.call_args.args[2]
+
+
+def test_stale_approve_button_does_not_publish_newer_job(tmp_path):
+    """Regression: A's old message must not publish B's video.
+
+    Buttons used to send a bare "approve", so handle_callback read whatever was
+    pending at click time — pressing an old message's button published the wrong video.
+    """
+    (tmp_path / "pending.json").write_text(
+        json.dumps({"job_id": "jobB", "title": "B", "video_filename": "jobB.mp4"}),
+        encoding="utf-8",
+    )
+    published = []
+
+    with patch("app.telegram_bot.send_message") as mock_send:
+        handle_callback(
+            "approve:jobA",
+            str(tmp_path),
+            "TOKEN",
+            "123",
+            lambda p: published.append(p) or {"results": []},
+            lambda f: None,
+        )
+
+    assert published == []
+    assert "geçerli değil" in mock_send.call_args.args[2]
+
+
+def test_legacy_jobless_buttons_are_refused(tmp_path):
+    """Old job_id-less buttons cannot be resolved to a job, so they fail closed."""
+    (tmp_path / "pending.json").write_text(
+        json.dumps({"job_id": "jobC", "video_filename": "jobC.mp4"}), encoding="utf-8"
+    )
+    published = []
+
+    with patch("app.telegram_bot.send_message") as mock_send:
+        handle_callback(
+            "approve",
+            str(tmp_path),
+            "TOKEN",
+            "123",
+            lambda p: published.append(p) or {"results": []},
+            lambda f: None,
+        )
+
+    assert published == []
+    assert "eski bir mesaja ait" in mock_send.call_args.args[2]
+

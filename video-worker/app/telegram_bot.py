@@ -101,6 +101,27 @@ def _retry_keyboard(job_id: str) -> dict:
     return {"inline_keyboard": [[{"text": "🔁 Tekrar dene", "callback_data": f"retry:{job_id}"}]]}
 
 
+def _approval_keyboard(job_id: str, approve_label: str = "✅ Onayla & Yayınla") -> dict:
+    """Buttons carry the job_id: a stale message must never approve a newer job."""
+    return {
+        "inline_keyboard": [
+            [
+                {"text": approve_label, "callback_data": f"approve:{job_id}"},
+                {"text": "❌ Reddet", "callback_data": f"reject:{job_id}"},
+            ]
+        ]
+    }
+
+
+def _target_payload(media_dir: str, job_id: str) -> dict | None:
+    """Resolve the job a button belongs to; None means 'not the current pending job'."""
+    pending = job_store.read_pending_payload(media_dir)
+    current = (pending or {}).get("job_id") or ""
+    if current != job_id:
+        return None
+    return pending
+
+
 def handle_callback(
     data: str,
     media_dir: str,
@@ -110,23 +131,40 @@ def handle_callback(
     cleanup_fn: Callable[[str], None],
     generate_fn: Callable[[str], dict] | None = None,
 ) -> None:
-    """Bir Telegram callback_query.data değerini işler ve sonucu chat'e bildirir."""
-    if data == "approve":
-        pending = job_store.read_pending_payload(media_dir)
-        if not pending:
-            send_message(token, chat_id, "Bekleyen iş yok.")
-            return
-        _publish_and_report(pending, token, chat_id, publish_fn)
-        return
+    """Bir Telegram callback_query.data değerini işler ve sonucu chat'e bildirir.
 
-    if data == "reject":
-        pending = job_store.read_pending_payload(media_dir)
-        if not pending:
-            send_message(token, chat_id, "Bekleyen iş yok.")
+    approve/reject butonları job_id taşır (`approve:<job_id>`). Yalnızca o an
+    bekleyen işle eşleşirse işlem yapılır — eski bir mesajdaki butona basmak
+    yeni bir videoyu yanlışlıkla yayınlamamalı.
+    """
+    for prefix, action in (("approve:", "approve"), ("reject:", "reject")):
+        if data.startswith(prefix):
+            job_id = data.split(":", 1)[1]
+            pending = _target_payload(media_dir, job_id)
+            if pending is None:
+                send_message(
+                    token,
+                    chat_id,
+                    "⚠️ Bu buton artık geçerli değil — o iş onay kuyruğunda yok.",
+                )
+                return
+            if action == "approve":
+                _publish_and_report(pending, token, chat_id, publish_fn)
+                return
+            filename = pending.get("video_filename") or pending.get("image_filename", "")
+            cleanup_fn(filename)
+            send_message(token, chat_id, "❌ İptal edildi, yeni içerik beklenecek.")
             return
-        filename = pending.get("video_filename") or pending.get("image_filename", "")
-        cleanup_fn(filename)
-        send_message(token, chat_id, "❌ İptal edildi, yeni içerik beklenecek.")
+
+    if data in ("approve", "reject"):
+        # Eski mesajlardaki job_id'siz butonlar. Niyet korunur ama hedef belirsizdir,
+        # bu yüzden fail-closed davranıp yanlış işi yayınlamayı reddederiz.
+        send_message(
+            token,
+            chat_id,
+            "⚠️ Bu buton eski bir mesaja ait. Lütfen en son gelen videonun "
+            "butonlarını kullanın.",
+        )
         return
 
     if data.startswith("pitch:"):
@@ -179,14 +217,7 @@ def handle_callback(
 
                     video_path = res.get("video_path")
                     caption = format_approval_caption(res)
-                    keyboard = {
-                        "inline_keyboard": [
-                            [
-                                {"text": "✅ Onayla & Yayınla", "callback_data": "approve"},
-                                {"text": "❌ Reddet", "callback_data": "reject"},
-                            ]
-                        ]
-                    }
+                    keyboard = _approval_keyboard(res.get("job_id") or "")
                     if video_path and Path(video_path).is_file():
                         send_video(token, chat_id, video_path, caption=caption, reply_markup=keyboard)
                     else:
@@ -436,14 +467,9 @@ async def handle_natural_message(
                     f"{res.get('description', '')}\n\n"
                     f"Video hazır! Yayınlamak istiyor musun?"
                 )
-                keyboard = {
-                    "inline_keyboard": [
-                        [
-                            {"text": "🚀 Onayla & Yayınla", "callback_data": "approve"},
-                            {"text": "❌ İptal Et", "callback_data": "reject"},
-                        ]
-                    ]
-                }
+                keyboard = _approval_keyboard(
+                    res.get("job_id") or "", approve_label="🚀 Onayla & Yayınla"
+                )
                 if video_path and Path(video_path).is_file():
                     send_video(token, chat_id, video_path, caption=caption, reply_markup=keyboard)
                 else:

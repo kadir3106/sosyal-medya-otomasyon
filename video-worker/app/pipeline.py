@@ -110,16 +110,9 @@ def _notify_telegram_awaiting_approval(result: dict) -> None:
         print("[pipeline] Telegram notify skipped (video yok).", flush=True)
         return
     try:
-        from app.telegram_bot import send_video
+        from app.telegram_bot import _approval_keyboard, send_video
 
-        keyboard = {
-            "inline_keyboard": [
-                [
-                    {"text": "✅ Onayla & Yayınla", "callback_data": "approve"},
-                    {"text": "❌ Reddet", "callback_data": "reject"},
-                ]
-            ]
-        }
+        keyboard = _approval_keyboard(result.get("job_id") or "")
         send_video(
             token,
             chat_id,
