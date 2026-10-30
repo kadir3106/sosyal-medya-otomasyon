@@ -684,14 +684,35 @@ Faz 0'ın P0 çekirdeği uygulandı ve doğrulandı.
 | 12 | Sahte zaman aşımı düzeltildi — tamamlanan yükleme artık okunuyor | `app/main.py` | Başarılı yayın "bilinmiyor" diye raporlanmıyor; operatör hayalet aramıyor |
 | 13 | Fan-out bütçesi yayıncı timeout'larıyla hizalandı (300 → 660 sn) | `app/main.py` | 600 sn süren YouTube/TikTok/Meta yüklemeleri artık **ortasında kesilmiyor** |
 | 14 | `append_publish_log` kilitlendi + atomik yazıyor | `app/publish_log.py` | Eşzamanlı yayın kayıtları kaybolmuyor (ölçüm: 40 kayıttan **35'i kayıptı**) |
+| 15 | Konu seçimi kilitlendi; desen paylaşılan `jsonstore`'a çıkarıldı | `app/jsonstore.py` (yeni), `app/topics.py`, `app/publish_log.py` | Eşzamanlı seçim **aynı konuyu tekrar dağıtmıyor** (ölçüm: 40 çağrıda 3 farklı konu, **30 tekrar**) |
 
 ### Ölçülen sonuç
 
 | Metrik | Önce | Sonra |
 |---|---|---|
-| Tam paket | **tamamlanamıyordu** (4 dosya askıda) | **627 passed, 3 skipped, 0 failed** |
-| Süre | belirsiz (askı) | **100 sn** |
+| Tam paket | **tamamlanamıyordu** (4 dosya askıda) | **631 passed, 3 skipped, 0 failed** |
+| Süre | belirsiz (askı) | **73 sn** |
 | Başarısız test | 5 | **0** |
+
+### Konu seçimi yarışı (madde 15)
+
+`select_next_topic` kilit yok + oku-değiştir-yaz yapıyordu. Ölçüm:
+
+```
+calls: 33                              ← 40 çağrıdan 7'si çöktü (JSONDecodeError)
+distinct topics handed out: 3           ← 40 çağrıda yalnızca 3 farklı konu
+duplicates handed out: 30               ← aynı konu 30 kez tekrar dağıtıldı
+```
+
+Düzeltmeden sonra: **40/40 farklı konu, 0 tekrar, 0 çökme.**
+
+Tekrar eden konu = tekrar eden içerik. Bu, doğrudan YouTube'un "inauthentic content" politikasının hedeflediği durum.
+
+Aynı desen iki modülde görüldüğü için kopyalamak yerine paylaşılan `app/jsonstore.py`'a çıkarıldı (`locked_json` / `read_json` / `write_atomic`). `publish_log.py`'deki önceki kopya **silindi** — net satır sayısı arttı ama desen artık tek yerde.
+
+- `write_atomic`: aynı dizine geçici dosya + `os.replace`; hata durumunda geçici dosya temizleniyor
+- `read_json`: bozuk dosyayı `<ad>.corrupt` olarak kenara alıp temiz başlıyor
+- Kilit **süreç-içi**; `video-worker` tek replika çalıştığı için yeterli
 
 ### Yayın kaydı yarışı (madde 14)
 
@@ -791,11 +812,12 @@ Askı sanılan şey aslında **gerçek ağ retry'ı**ydı: `.env` içindeki `DIR
 - Lint (bilinçli olarak atlandı: kod tabanında lint baseline yok, varsayılan ruff/flake8 ilk koşuda kırmızı olur ve CI'ı görmezden gelmeye alıştırır)
 - Playwright kararı → **verildi**: CI'a eklenmedi, host-only kaldı (hiçbir test `tiktok_browser`'ı import etmiyor)
 - `pytest-timeout` ile per-test timeout (yeni bağımlılık gerektiriyor)
-- Push (11 commit lokal `cursor/hybrid-flux-architecture` dalında)
+- Push (12 commit lokal `cursor/hybrid-flux-architecture` dalında)
 - `video-worker/video-output/*` üretilmiş artefaktları ve `_tmp_*` scratch dizinleri (bilinçli olarak commit edilmedi)
 - Faz 1'in geri kalanı (ContentJob artefakt manifesti, publication durum sorgulama, kalite kapıları)
 - Zombi upload thread'leri için süreç düzeyinde izolasyon (`shutdown(wait=False)` artık beklemiyor; thread'ler süreç bitene kadar yaşayabilir)
-- `append_publish_log` kilidi yalnızca **süreç-içi**; birden çok video-worker replikası çalışırsa dosya düzeyinde kilit gerekir
+- `jsonstore` kilidi yalnızca **süreç-içi**; birden çok video-worker replikası çalışırsa dosya düzeyinde kilit gerekir
+- `jobs.py` SQLite kullanıyor ama `write_pending_mirror` düz `write_text` ile yazıyor (atomik değil, kilitli değil)
 
 ### Commit geçmişi
 
@@ -812,6 +834,7 @@ Askı sanılan şey aslında **gerçek ağ retry'ı**ydı: `.env` içindeki `DIR
 | `3af7cc5` | Sahte zaman aşımı düzeltildi; tamamlanan yükleme okunuyor (2 dosya) |
 | `efa6e56` | Bütçe yayıncı timeout'larıyla hizalandı + sözleşme testi (2 dosya) |
 | `52a0f85` | `append_publish_log` kilit + atomik yazma (2 dosya) |
+| `7edd883` | Konu seçimi kilidi + paylaşılan `jsonstore` (5 dosya) |
 
 > Bu belgeyi güncelleyen commit ayrıca `docs:` önekiyle geçmişte bulunabilir (kendi hash'ini içeremez).
 
