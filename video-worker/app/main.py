@@ -10,6 +10,7 @@ import asyncio
 import contextlib
 import json
 import shutil
+import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from contextlib import asynccontextmanager
@@ -399,23 +400,29 @@ def _run_upload_task(name: str, fn, *args, **kwargs) -> dict:
 
 
 def _run_parallel_uploads(tasks: list[tuple[str, object, tuple, dict]]) -> list[dict]:
-    """Fan-out platform uploads with per-task timeouts. tasks: (platform, fn, args, kwargs).
+    """Fan-out platform uploads. tasks: (platform, fn, args, kwargs).
 
-    A timeout is NOT a failure: the worker thread keeps running and may still have
-    published. It is reported as status="unknown" so the caller never offers a blind
-    retry that would post the same video twice.
+    Pool shutdown is deliberately NOT used: `with ThreadPoolExecutor(...)` calls
+    shutdown(wait=True) on exit, so a fut.result(timeout=...) expiry still blocks
+    until the worker finishes. The upload then really happened while we reported
+    "unknown", which sent operators chasing a phantom. Instead we wait a real
+    deadline and read the settled result — a genuine timeout stays "unknown".
     """
     if not tasks:
         return []
+    pool = ThreadPoolExecutor(max_workers=min(_PUBLISH_WORKERS, len(tasks)))
     by_name: dict[str, dict] = {}
-    with ThreadPoolExecutor(max_workers=min(_PUBLISH_WORKERS, len(tasks))) as pool:
+    try:
         futures = {
             pool.submit(_run_upload_task, name, fn, *args, **kwargs): name
             for name, fn, args, kwargs in tasks
         }
+        deadline = time.monotonic() + _PUBLISH_TIMEOUT_SECONDS
         for fut, name in futures.items():
             try:
-                by_name[name] = fut.result(timeout=_PUBLISH_TIMEOUT_SECONDS)
+                by_name[name] = fut.result(
+                    timeout=max(0.0, deadline - time.monotonic())
+                )
             except FutureTimeoutError:
                 by_name[name] = {
                     "platform": name,
@@ -427,6 +434,9 @@ def _run_parallel_uploads(tasks: list[tuple[str, object, tuple, dict]]) -> list[
                 }
             except Exception as exc:
                 by_name[name] = {"platform": name, "status": "error", "error": str(exc)}
+    finally:
+        # Do not block on stragglers: their outcome is already recorded as unknown.
+        pool.shutdown(wait=False)
     return [
         by_name.get(name, {"platform": name, "status": "error", "error": "missing"})
         for name, _, _, _ in tasks

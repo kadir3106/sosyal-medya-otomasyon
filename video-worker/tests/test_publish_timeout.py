@@ -10,17 +10,41 @@ client = TestClient(app)
 
 
 def test_run_parallel_uploads_timeout_is_unknown_not_error():
-    """A timed-out upload may still have published; it must not be reported as a failure."""
+    """A genuinely stuck upload must not be reported as a failure."""
 
-    def slow(name):
-        time.sleep(0.3)
+    def stuck(name):
+        time.sleep(5)
         return {"platform": name, "status": "success"}
 
     with patch("app.main._PUBLISH_TIMEOUT_SECONDS", 0.05):
-        results = _run_parallel_uploads([("youtube", slow, ("youtube",), {})])
+        results = _run_parallel_uploads([("youtube", stuck, ("youtube",), {})])
 
     assert results[0]["status"] == "unknown"
     assert "unknown" in results[0]["error"]
+
+
+def test_run_parallel_uploads_reads_settled_result_within_deadline():
+    """Regression: pool shutdown must not hide a finished upload behind a timeout.
+
+    With `with ThreadPoolExecutor(...)`, exiting the block called shutdown(wait=True),
+    so fut.result(timeout=...) expiry still waited for the worker. The upload really
+    completed while the caller reported "unknown".
+    """
+
+    def completes_quickly(name):
+        time.sleep(0.05)
+        return {"platform": name, "status": "success", "video_id": "vid1"}
+
+    started = time.monotonic()
+    with patch("app.main._PUBLISH_TIMEOUT_SECONDS", 1.0):
+        results = _run_parallel_uploads(
+            [("youtube", completes_quickly, ("youtube",), {})]
+        )
+    elapsed = time.monotonic() - started
+
+    assert results[0]["status"] == "success"
+    assert results[0]["video_id"] == "vid1"
+    assert elapsed < 1.0, "must not wait for the whole deadline when the task settles"
 
 
 def test_run_parallel_uploads_real_exception_still_error():
