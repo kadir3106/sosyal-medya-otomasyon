@@ -679,14 +679,26 @@ Faz 0'ın P0 çekirdeği uygulandı ve doğrulandı.
 | 7 | Bayat testler düzeltildi | `tests/test_main.py`, `tests/test_ai_visuals.py`, `tests/test_documentary_v2_stage_d1.py`, `tests/test_phase_a_quality.py` | `/health` kesin-eşitlik, gerçek Fal 403, gerçek DNS (`example.invalid`), eksik `voice_settings` kwarg'ı |
 | 8 | İkinci `/publish` artık reddediliyor | `video-worker/app/jobs.py`, `app/main.py`, `app/errors.py`, `app/telegram_bot.py` | Çift tıklama / n8n retry / Telegram double-callback aynı videoyu **iki kez public yayınlayamıyor** (409) |
 | 9 | Onay butonları `job_id`'ye bağlandı | `video-worker/app/telegram_bot.py`, `app/pipeline.py` | Eski bir mesajdaki "Onayla"ya basmak **yanlış videoyu yayınlayamıyor** |
+| 10 | Onay video dosyasının **hash'ine** bağlandı | `app/pipeline.py`, `app/main.py`, `app/publish_log.py`, `app/errors.py` | Aynı `job_id` altında yeniden render edilen farklı içerik eski onayla **yayınlanamıyor** (409) |
 
 ### Ölçülen sonuç
 
 | Metrik | Önce | Sonra |
 |---|---|---|
-| Tam paket | **tamamlanamıyordu** (4 dosya askıda) | **615 passed, 3 skipped, 0 failed** |
-| Süre | belirsiz (askı) | **70 sn** |
+| Tam paket | **tamamlanamıyordu** (4 dosya askıda) | **620 passed, 3 skipped, 0 failed** |
+| Süre | belirsiz (askı) | **110 sn** |
 | Başarısız test | 5 | **0** |
+
+### Artefakt hash doğrulaması (madde 10)
+
+`job_id` **saniye çözünürlüklü** (`main.py:54/259/299`), yani yeni bir render aynı `media_dir/{job_id}.mp4` yoluna yazabilir. Onay yalnızca job id'ye bağlı olduğu sürece, onaylanan dosya farklı içerikle değiştirilip yine yayınlanabilirdi.
+
+- `pipeline.py` onay payload'ına `video_sha256` yazıyor (varsa split-screen, yoksa cinematic dosya)
+- `/publish` özeti **claim'den önce** yeniden doğrular → uyuşmazlık veya kayıp dosya `ArtifactChangedError` → **409**, hiç yükleme yapılmaz
+- Doğrulama claim'den önce çalışır, aksi halde reddedilen bir yayın işi `publishing`'de kilitli bırakırdı
+- Özet yoksa **fail-open** → legacy/curl çağrıları ve görsel akışı çalışmaya devam eder
+
+Test sırasında iki hata yakalandı: **(1)** `PublishRequest` `video_sha256` alanını tanımlamıyordu, Pydantic onu sessizce düşürüyordu → koruma ölü kod olurdu; **(2)** `_verify_approved_artifact` yalnızca `video_path`/`split_screen_path`'e bakıyordu, görsel işlerinin `image_path`'ini kaçırıyordu.
 
 ### Onay hedefleme detayı (madde 9)
 
@@ -716,9 +728,9 @@ Askı sanılan şey aslında **gerçek ağ retry'ı**ydı: `.env` içindeki `DIR
 - Lint (bilinçli olarak atlandı: kod tabanında lint baseline yok, varsayılan ruff/flake8 ilk koşuda kırmızı olur ve CI'ı görmezden gelmeye alıştırır)
 - Playwright kararı → **verildi**: CI'a eklenmedi, host-only kaldı (hiçbir test `tiktok_browser`'ı import etmiyor)
 - `pytest-timeout` ile per-test timeout (yeni bağımlılık gerektiriyor)
-- Push (6 commit lokal `cursor/hybrid-flux-architecture` dalında)
+- Push (7 commit lokal `cursor/hybrid-flux-architecture` dalında)
 - `video-worker/video-output/*` üretilmiş artefaktları ve `_tmp_*` scratch dizinleri (bilinçli olarak commit edilmedi)
-- Faz 1'in geri kalanı (ContentJob artefakt manifesti, onayın video dosyası hash'ine bağlanması, publication durum sorgulama, kalite kapıları)
+- Faz 1'in geri kalanı (ContentJob artefakt manifesti, publication durum sorgulama, kalite kapıları)
 
 ### Commit geçmişi
 
@@ -730,6 +742,7 @@ Askı sanılan şey aslında **gerçek ağ retry'ı**ydı: `.env` içindeki `DIR
 | `69effc9` | Bu belgeye uygulama durumu |
 | `7200d5f` | Yayın idempotency: `claim_for_publish` + 409 (6 dosya) |
 | `bdf50e4` | Onay butonları `job_id`'ye bağlandı (3 dosya) |
+| `ad944cb` | Onay video hash'ine bağlandı (7 dosya) |
 
 > Bu belgeyi güncelleyen commit ayrıca `docs:` önekiyle geçmişte bulunabilir (kendi hash'ini içeremez).
 
