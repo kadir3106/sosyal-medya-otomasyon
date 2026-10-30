@@ -681,14 +681,33 @@ Faz 0'ın P0 çekirdeği uygulandı ve doğrulandı.
 | 9 | Onay butonları `job_id`'ye bağlandı | `video-worker/app/telegram_bot.py`, `app/pipeline.py` | Eski bir mesajdaki "Onayla"ya basmak **yanlış videoyu yayınlayamıyor** |
 | 10 | Onay video dosyasının **hash'ine** bağlandı | `app/pipeline.py`, `app/main.py`, `app/publish_log.py`, `app/errors.py` | Aynı `job_id` altında yeniden render edilen farklı içerik eski onayla **yayınlanamıyor** (409) |
 | 11 | Yükleme zaman aşımı "başarısız" değil **"bilinmiyor"** | `app/main.py`, `app/errors.py`, `app/telegram_bot.py` | Zaman aşımında retry butonu sunulmuyor → **zaten yayınlanmış video ikinci kez yüklenemiyor** |
+| 12 | Sahte zaman aşımı düzeltildi — tamamlanan yükleme artık okunuyor | `app/main.py` | Başarılı yayın "bilinmiyor" diye raporlanmıyor; operatör hayalet aramıyor |
 
 ### Ölçülen sonuç
 
 | Metrik | Önce | Sonra |
 |---|---|---|
-| Tam paket | **tamamlanamıyordu** (4 dosya askıda) | **623 passed, 3 skipped, 0 failed** |
-| Süre | belirsiz (askı) | **115 sn** |
+| Tam paket | **tamamlanamıyordu** (4 dosya askıda) | **624 passed, 3 skipped, 0 failed** |
+| Süre | belirsiz (askı) | **85 sn** |
 | Başarısız test | 5 | **0** |
+
+### Sahte zaman aşımı bulgusu (madde 12)
+
+Madde 11'i uygularken ölçtüm ve **kendi düzeltmemin yanlış olduğunu** gördüm:
+
+```
+reported: TimeoutError                      ← "bilinmiyor" dedik
+elapsed: 0.40                               ← aslında bekledik
+side effects that really happened: ['PUBLISHED:x']
+real outcome was: {'platform': 'x', 'status': 'success'}
+```
+
+`with ThreadPoolExecutor(...)` bloktan çıkarken `shutdown(wait=True)` çağırıyor, yani `fut.result(timeout=...)` süresi dolsa bile blok **worker bitene kadar bekliyordu**. Yükleme gerçekten tamamlanıyor, ama biz `"unknown"` yazıyorduk → başarılı yayın çözümsüz görünüyor, dosya silinmiyor, operatör olmayan bir sorunu araştırıyordu.
+
+- Bağlam yöneticisi yerine açık `pool` + `finally: pool.shutdown(wait=False)`
+- Tüm future'lar için **tek bir monotonic son tarih** (eskiden her future 300 sn alabiliyordu → 7 platformda toplam 2100 sn)
+- Doğrulama: 3 sn'lik görev, 0.1 sn bütçeyle **0.11 sn**'de dönüyor ve henüz yan etki yok → `"unknown"` artık dürüst
+- Ayrıca eksik `import time` eklendi (`NameError` verirdi)
 
 ### Belirsiz sonuç ayrımı (madde 11)
 
@@ -737,9 +756,10 @@ Askı sanılan şey aslında **gerçek ağ retry'ı**ydı: `.env` içindeki `DIR
 - Lint (bilinçli olarak atlandı: kod tabanında lint baseline yok, varsayılan ruff/flake8 ilk koşuda kırmızı olur ve CI'ı görmezden gelmeye alıştırır)
 - Playwright kararı → **verildi**: CI'a eklenmedi, host-only kaldı (hiçbir test `tiktok_browser`'ı import etmiyor)
 - `pytest-timeout` ile per-test timeout (yeni bağımlılık gerektiriyor)
-- Push (8 commit lokal `cursor/hybrid-flux-architecture` dalında)
+- Push (9 commit lokal `cursor/hybrid-flux-architecture` dalında)
 - `video-worker/video-output/*` üretilmiş artefaktları ve `_tmp_*` scratch dizinleri (bilinçli olarak commit edilmedi)
 - Faz 1'in geri kalanı (ContentJob artefakt manifesti, publication durum sorgulama, kalite kapıları)
+- Zombi upload thread'leri için süreç düzeyinde izolasyon (`shutdown(wait=False)` artık beklemiyor; thread'ler süreç bitene kadar yaşayabilir)
 
 ### Commit geçmişi
 
@@ -753,6 +773,7 @@ Askı sanılan şey aslında **gerçek ağ retry'ı**ydı: `.env` içindeki `DIR
 | `bdf50e4` | Onay butonları `job_id`'ye bağlandı (3 dosya) |
 | `ad944cb` | Onay video hash'ine bağlandı (7 dosya) |
 | `a615fa6` | Zaman aşımı "bilinmiyor" olarak ayrıldı (4 dosya) |
+| `3af7cc5` | Sahte zaman aşımı düzeltildi; tamamlanan yükleme okunuyor (2 dosya) |
 
 > Bu belgeyi güncelleyen commit ayrıca `docs:` önekiyle geçmişte bulunabilir (kendi hash'ini içeremez).
 
