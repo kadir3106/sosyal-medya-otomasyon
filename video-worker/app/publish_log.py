@@ -2,6 +2,17 @@ import json
 from pathlib import Path
 
 
+def file_sha256(path: str, *, chunk_size: int = 1 << 20) -> str:
+    """Video dosyasının içerik özeti — onayın hangi dosyaya verildiğini bağlar."""
+    import hashlib
+
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(chunk_size), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def append_publish_log(log_path: str, entry: dict) -> None:
     path = Path(log_path)
     if path.is_file():

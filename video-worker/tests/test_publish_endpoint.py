@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
+from app.config import config
 from app.main import app
 
 client = TestClient(app)
@@ -472,4 +473,92 @@ def test_publish_twice_returns_409_and_does_not_reupload(
     assert second.status_code == 409
     assert mock_x.call_count == 1
     assert mock_li.call_count == 1
+
+
+
+@patch("app.main.upload_to_facebook")
+@patch("app.main.upload_to_instagram")
+@patch("app.main.upload_to_tiktok")
+@patch("app.main.upload_to_youtube")
+@patch("app.main.upload_to_x")
+@patch("app.main.upload_to_linkedin")
+def test_publish_refuses_when_approved_artifact_changed(
+    mock_li, mock_x, mock_yt, mock_tt, mock_ig, mock_fb, tmp_path
+):
+    """Approval is bound to file content: a re-render under the same job_id must not publish."""
+    from app import jobs as job_store
+    from app.publish_log import file_sha256
+
+    image_path = tmp_path / "jobhash.png"
+    image_path.write_bytes(b"APPROVED_BYTES")
+    approved_hash = file_sha256(str(image_path))
+    job_store.create_job(tmp_path, "jobhash", kind="image", state="awaiting_approval")
+
+    # Same filename, different content — e.g. a re-render overwrote the file.
+    image_path.write_bytes(b"DIFFERENT_BYTES")
+
+    body = {
+        "kind": "image",
+        "image_path": str(image_path),
+        "image_filename": "jobhash.png",
+        "caption": "hash guard",
+        "video_sha256": approved_hash,
+    }
+    with patch.object(config, "MEDIA_DIR", str(tmp_path)):
+        response = client.post("/publish", json=body)
+
+    assert response.status_code == 409
+    assert not mock_x.called
+    assert not mock_li.called
+    # A refused publish must not consume the claim and strand the job.
+    assert job_store.get_job(tmp_path, "jobhash")["state"] == "awaiting_approval"
+
+
+@patch("app.main.upload_to_linkedin")
+@patch("app.main.upload_to_x")
+def test_publish_allows_matching_artifact_hash(mock_x, mock_li, tmp_path):
+    from app import jobs as job_store
+    from app.publish_log import file_sha256
+
+    image_path = tmp_path / "jobok.png"
+    image_path.write_bytes(b"APPROVED_BYTES")
+    job_store.create_job(tmp_path, "jobok", kind="image", state="awaiting_approval")
+    mock_x.return_value = {"platform": "x", "status": "success", "tweet_id": "t1"}
+    mock_li.return_value = {"platform": "linkedin", "status": "success", "post_id": "p1"}
+
+    body = {
+        "kind": "image",
+        "image_path": str(image_path),
+        "image_filename": "jobok.png",
+        "caption": "hash ok",
+        "video_sha256": file_sha256(str(image_path)),
+    }
+    with patch("app.main.config") as mock_config:
+        mock_config.MEDIA_DIR = str(tmp_path)
+        response = client.post("/publish", json=body)
+
+    assert response.status_code == 200
+    assert mock_x.called
+
+
+@patch("app.main.upload_to_linkedin")
+@patch("app.main.upload_to_x")
+def test_publish_without_hash_still_works(mock_x, mock_li, tmp_path):
+    """Legacy/curl callers send no hash; they must keep working."""
+    image_path = tmp_path / "jobnohash.png"
+    image_path.write_bytes(b"BYTES")
+    mock_x.return_value = {"platform": "x", "status": "success", "tweet_id": "t1"}
+    mock_li.return_value = {"platform": "linkedin", "status": "success", "post_id": "p1"}
+
+    body = {
+        "kind": "image",
+        "image_path": str(image_path),
+        "image_filename": "jobnohash.png",
+        "caption": "no hash",
+    }
+    with patch("app.main.config") as mock_config:
+        mock_config.MEDIA_DIR = str(tmp_path)
+        response = client.post("/publish", json=body)
+
+    assert response.status_code == 200
 

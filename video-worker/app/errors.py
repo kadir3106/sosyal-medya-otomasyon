@@ -16,6 +16,15 @@ class AlreadyPublishedError(Exception):
         self.state = state
 
 
+class ArtifactChangedError(Exception):
+    """Onaylanan dosya yayından önce değişti veya kayboldu — onay geçersiz."""
+
+    def __init__(self, job_id: str, reason: str):
+        super().__init__(f"Job {job_id}: approved artifact invalid ({reason})")
+        self.job_id = job_id
+        self.reason = reason
+
+
 class FalAuthBillingError(Exception):
     """Fal.ai (Flux/Kling) 401/403 veya bakiye/yetki hatası — stok fallback yasak, job hard-fail."""
 

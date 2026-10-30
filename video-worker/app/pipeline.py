@@ -125,6 +125,18 @@ def _notify_telegram_awaiting_approval(result: dict) -> None:
         print(f"[pipeline] Telegram approval notify failed: {notify_err}", flush=True)
 
 
+def _safe_file_sha256(path: str | None) -> str | None:
+    """Onay kaydı için dosya özeti. Hesaplanamazsa None — yayını bloklamaz."""
+    if not path or not Path(path).is_file():
+        return None
+    try:
+        from app.publish_log import file_sha256
+
+        return file_sha256(path)
+    except OSError:
+        return None
+
+
 def _extract_hook(script: str, max_words: int = 12) -> str:
     """First sentence (or first N words) for Telegram QA / job telemetry."""
     text = " ".join((script or "").split())
@@ -918,6 +930,8 @@ def _generate_video_sync(job_id: str, topic: str | None = None) -> dict:
             "split_screen_path": split_screen_path,
             "split_screen_filename": split_screen_filename,
             "thumbnail_path": thumbnail_path,
+            # Onay bu dosyanın içeriğine verilir; /publish yeniden doğrular.
+            "video_sha256": _safe_file_sha256(split_screen_path or video_path),
             "topic": topic,
             "title": script_data["title"],
             "description": script_data["description"],

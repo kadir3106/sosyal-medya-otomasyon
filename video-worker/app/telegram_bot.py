@@ -6,7 +6,7 @@ from typing import Callable
 import requests
 
 from app import jobs as job_store
-from app.errors import AllPlatformsFailedError, AlreadyPublishedError
+from app.errors import AllPlatformsFailedError, AlreadyPublishedError, ArtifactChangedError
 
 API_URL = "https://api.telegram.org/bot{token}/{method}"
 POLL_TIMEOUT_SECONDS = 25
@@ -278,6 +278,14 @@ def _publish_and_report(
             chat_id,
             f'⚠️ "{title}" — bu iş zaten yayınlanmış/yayınlanıyor (job {exc.job_id}). '
             "Çift yayını önlemek için atlandı.",
+        )
+        return
+    except ArtifactChangedError as exc:
+        send_message(
+            token,
+            chat_id,
+            f'⚠️ "{title}" — onaylanan dosya artık geçerli değil ({exc.reason}). '
+            "Yayın yapılmadı; videoyu yeniden üretip onaylayın.",
         )
         return
     except AllPlatformsFailedError as exc:

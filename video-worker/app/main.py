@@ -23,7 +23,7 @@ from app.analytics import build_weekly_report
 from app.catchup import mark_run_today, maybe_catch_up
 from app.config import config
 from app.daily_digest import run_digest_loop
-from app.errors import AllPlatformsFailedError, AlreadyPublishedError
+from app.errors import AllPlatformsFailedError, AlreadyPublishedError, ArtifactChangedError
 from app.image_gen import generate_image_content, render_card
 from app import jobs as job_store
 from app.joblog import log_event
@@ -171,6 +171,8 @@ class PublishRequest(BaseModel):
     image_path: str = ""
     image_filename: str = ""
     caption: str = ""
+    # Onaylanan dosyanın içerik özeti (pipeline yazar). Yoksa doğrulama atlanır.
+    video_sha256: str = ""
 
 
 @app.get("/health")
@@ -411,10 +413,41 @@ def _run_parallel_uploads(tasks: list[tuple[str, object, tuple, dict]]) -> list[
     ]
 
 
+def _verify_approved_artifact(payload: dict) -> None:
+    """Onaylanan dosyanın hâlâ aynı dosya olduğunu doğrular.
+
+    job_id saniye çözünürlüklü olduğu için aynı ad üzerine yeni bir render
+    yazılabilir. Onay payload'ında özet varsa ve dosya artık uyuşmuyorsa yayın
+    reddedilir. Özet yoksa (legacy/curl akışı) yayın engellenmez.
+    """
+    expected = payload.get("video_sha256")
+    if not expected:
+        return
+    path = (
+        payload.get("split_screen_path")
+        or payload.get("video_path")
+        or payload.get("image_path")
+        or ""
+    )
+    if not path or not Path(path).is_file():
+        raise ArtifactChangedError(
+            str(payload.get("job_id") or ""), "onaylanan dosya artık yok"
+        )
+    from app.publish_log import file_sha256
+
+    if file_sha256(path) != expected:
+        raise ArtifactChangedError(
+            str(payload.get("job_id") or ""), "dosya içeriği onaydan sonra değişti"
+        )
+
+
 def _run_publish(payload: dict) -> dict:
     kind = payload.get("kind", "video")
     job_id = Path(payload.get("video_filename") or payload.get("image_filename") or "unknown").stem
     media_dir = Path(config.MEDIA_DIR)
+
+    # Verify first: a mismatch must not consume the publish claim and strand the job.
+    _verify_approved_artifact(payload)
 
     # Claim before any upload: a duplicate /publish would post publicly twice.
     if not job_store.claim_for_publish(media_dir, job_id):
@@ -643,6 +676,8 @@ def publish(payload: PublishRequest):
     try:
         return _run_publish(payload.model_dump())
     except AlreadyPublishedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ArtifactChangedError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except AllPlatformsFailedError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
