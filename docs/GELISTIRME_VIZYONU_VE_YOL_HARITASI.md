@@ -683,14 +683,32 @@ Faz 0'ın P0 çekirdeği uygulandı ve doğrulandı.
 | 11 | Yükleme zaman aşımı "başarısız" değil **"bilinmiyor"** | `app/main.py`, `app/errors.py`, `app/telegram_bot.py` | Zaman aşımında retry butonu sunulmuyor → **zaten yayınlanmış video ikinci kez yüklenemiyor** |
 | 12 | Sahte zaman aşımı düzeltildi — tamamlanan yükleme artık okunuyor | `app/main.py` | Başarılı yayın "bilinmiyor" diye raporlanmıyor; operatör hayalet aramıyor |
 | 13 | Fan-out bütçesi yayıncı timeout'larıyla hizalandı (300 → 660 sn) | `app/main.py` | 600 sn süren YouTube/TikTok/Meta yüklemeleri artık **ortasında kesilmiyor** |
+| 14 | `append_publish_log` kilitlendi + atomik yazıyor | `app/publish_log.py` | Eşzamanlı yayın kayıtları kaybolmuyor (ölçüm: 40 kayıttan **35'i kayıptı**) |
 
 ### Ölçülen sonuç
 
 | Metrik | Önce | Sonra |
 |---|---|---|
-| Tam paket | **tamamlanamıyordu** (4 dosya askıda) | **625 passed, 3 skipped, 0 failed** |
-| Süre | belirsiz (askı) | **72 sn** |
+| Tam paket | **tamamlanamıyordu** (4 dosya askıda) | **627 passed, 3 skipped, 0 failed** |
+| Süre | belirsiz (askı) | **100 sn** |
 | Başarısız test | 5 | **0** |
+
+### Yayın kaydı yarışı (madde 14)
+
+`append_publish_log` tüm dosyayı kilit olmadan oku-değiştir-yaz yapıyordu ve `main._run_publish` paralel yayın sonuçlarını buradan yazıyor. Ölçüm:
+
+```
+appends attempted: 40
+entries actually stored: 5
+LOST: 35
+JSONDecodeError: Expecting value: line 1 column 1   ← dosya bozuldu
+```
+
+Düzeltmeden sonra: **40/40 kaydedildi, 0 kayıp**.
+
+- Süreç-içi kilit (`threading.Lock`) oku-değiştir-yaz'ı serileştiriyor
+- **Atomik yazma**: aynı dizine geçici dosya + `os.replace` → okuyucu asla yarım dosya görmez
+- Bozuk dosya artık yayın yolunu çökertmiyor: `<ad>.corrupt` olarak kenara alınıp log temiz başlıyor (kanıt korunuyor)
 
 ### Bütçe / yayıncı timeout uyumsuzluğu (madde 13)
 
@@ -773,10 +791,11 @@ Askı sanılan şey aslında **gerçek ağ retry'ı**ydı: `.env` içindeki `DIR
 - Lint (bilinçli olarak atlandı: kod tabanında lint baseline yok, varsayılan ruff/flake8 ilk koşuda kırmızı olur ve CI'ı görmezden gelmeye alıştırır)
 - Playwright kararı → **verildi**: CI'a eklenmedi, host-only kaldı (hiçbir test `tiktok_browser`'ı import etmiyor)
 - `pytest-timeout` ile per-test timeout (yeni bağımlılık gerektiriyor)
-- Push (10 commit lokal `cursor/hybrid-flux-architecture` dalında)
+- Push (11 commit lokal `cursor/hybrid-flux-architecture` dalında)
 - `video-worker/video-output/*` üretilmiş artefaktları ve `_tmp_*` scratch dizinleri (bilinçli olarak commit edilmedi)
 - Faz 1'in geri kalanı (ContentJob artefakt manifesti, publication durum sorgulama, kalite kapıları)
 - Zombi upload thread'leri için süreç düzeyinde izolasyon (`shutdown(wait=False)` artık beklemiyor; thread'ler süreç bitene kadar yaşayabilir)
+- `append_publish_log` kilidi yalnızca **süreç-içi**; birden çok video-worker replikası çalışırsa dosya düzeyinde kilit gerekir
 
 ### Commit geçmişi
 
@@ -792,6 +811,7 @@ Askı sanılan şey aslında **gerçek ağ retry'ı**ydı: `.env` içindeki `DIR
 | `a615fa6` | Zaman aşımı "bilinmiyor" olarak ayrıldı (4 dosya) |
 | `3af7cc5` | Sahte zaman aşımı düzeltildi; tamamlanan yükleme okunuyor (2 dosya) |
 | `efa6e56` | Bütçe yayıncı timeout'larıyla hizalandı + sözleşme testi (2 dosya) |
+| `52a0f85` | `append_publish_log` kilit + atomik yazma (2 dosya) |
 
 > Bu belgeyi güncelleyen commit ayrıca `docs:` önekiyle geçmişte bulunabilir (kendi hash'ini içeremez).
 
