@@ -678,15 +678,25 @@ Faz 0'ın P0 çekirdeği uygulandı ve doğrulandı.
 | 6 | `live` / `live_smoke` markları kaydedildi | `video-worker/pytest.ini` | Canlı testler ayrıştırılabilir, uyarılar temizlendi |
 | 7 | Bayat testler düzeltildi | `tests/test_main.py`, `tests/test_ai_visuals.py`, `tests/test_documentary_v2_stage_d1.py`, `tests/test_phase_a_quality.py` | `/health` kesin-eşitlik, gerçek Fal 403, gerçek DNS (`example.invalid`), eksik `voice_settings` kwarg'ı |
 | 8 | İkinci `/publish` artık reddediliyor | `video-worker/app/jobs.py`, `app/main.py`, `app/errors.py`, `app/telegram_bot.py` | Çift tıklama / n8n retry / Telegram double-callback aynı videoyu **iki kez public yayınlayamıyor** (409) |
-| 9 | Sayaç koleksiyonu tam paket doğrulaması | — | 608 → **613 passed** (5 yeni idempotency testi) |
+| 9 | Onay butonları `job_id`'ye bağlandı | `video-worker/app/telegram_bot.py`, `app/pipeline.py` | Eski bir mesajdaki "Onayla"ya basmak **yanlış videoyu yayınlayamıyor** |
 
 ### Ölçülen sonuç
 
 | Metrik | Önce | Sonra |
 |---|---|---|
-| Tam paket | **tamamlanamıyordu** (4 dosya askıda) | **613 passed, 3 skipped, 0 failed** |
-| Süre | belirsiz (askı) | **96 sn** |
+| Tam paket | **tamamlanamıyordu** (4 dosya askıda) | **615 passed, 3 skipped, 0 failed** |
+| Süre | belirsiz (askı) | **70 sn** |
 | Başarısız test | 5 | **0** |
+
+### Onay hedefleme detayı (madde 9)
+
+`handle_callback` eskiden `data == "approve"` kontrolüyle **o an pending olan her ne ise** onu yayınlıyordu. Butonlar statikti (`"approve"`), yani A işinin mesajındaki butona basıldığında B işi yayınlanabiliyordu. Scratch bir üreme ile kanıtlandı: eski yol tıklanan buton "A"ya aitken **"B"yi yayınladı**; yeni yol hiçbir şey yayınlamıyor.
+
+- Butonlar artık `approve:<job_id>` / `reject:<job_id>` taşıyor (`_approval_keyboard()`)
+- `handle_callback` hedefi `_target_payload()` ile çözer; güncel pending işle eşleşmezse reddeder
+- Eski `job_id`'siz butonlar **fail-closed**: tahmin etmek yerine açıklayıcı mesajla reddedilir
+- `_target_payload` çözülen payload ile karşılaştırır, çünkü `read_pending_payload` `job_id`'yi SQLite satırından geri dolduruyor → yukarı akış çağıranlarının hiçbiri değişmedi
+- Dört buton üretim yeri güncellendi: `pipeline.py` onay bildirimi, pitch önizlemesi, doğal mesaj render'ı, paylaşılan helper
 
 ### Yayın idempotency detayı (madde 8)
 
@@ -706,9 +716,9 @@ Askı sanılan şey aslında **gerçek ağ retry'ı**ydı: `.env` içindeki `DIR
 - Lint (bilinçli olarak atlandı: kod tabanında lint baseline yok, varsayılan ruff/flake8 ilk koşuda kırmızı olur ve CI'ı görmezden gelmeye alıştırır)
 - Playwright kararı → **verildi**: CI'a eklenmedi, host-only kaldı (hiçbir test `tiktok_browser`'ı import etmiyor)
 - `pytest-timeout` ile per-test timeout (yeni bağımlılık gerektiriyor)
-- Push (4 commit lokal `cursor/hybrid-flux-architecture` dalında)
+- Push (6 commit lokal `cursor/hybrid-flux-architecture` dalında)
 - `video-worker/video-output/*` üretilmiş artefaktları ve `_tmp_*` scratch dizinleri (bilinçli olarak commit edilmedi)
-- Faz 1'in geri kalanı (ContentJob artefakt manifesti, hash'e bağlı onay, publication durum sorgulama, kalite kapıları)
+- Faz 1'in geri kalanı (ContentJob artefakt manifesti, onayın video dosyası hash'ine bağlanması, publication durum sorgulama, kalite kapıları)
 
 ### Commit geçmişi
 
@@ -719,6 +729,7 @@ Askı sanılan şey aslında **gerçek ağ retry'ı**ydı: `.env` içindeki `DIR
 | `7e3d1cd` | CI workflow (`.github/workflows/ci.yml`) |
 | `69effc9` | Bu belgeye uygulama durumu |
 | `7200d5f` | Yayın idempotency: `claim_for_publish` + 409 (6 dosya) |
+| `bdf50e4` | Onay butonları `job_id`'ye bağlandı (3 dosya) |
 
 > Bu belgeyi güncelleyen commit ayrıca `docs:` önekiyle geçmişte bulunabilir (kendi hash'ini içeremez).
 
