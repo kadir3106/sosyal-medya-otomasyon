@@ -693,8 +693,21 @@ Askı sanılan şey aslında **gerçek ağ retry'ı**ydı: `.env` içindeki `DIR
 ### Henüz yapılmadı
 
 - Credential rotation ve Git history temizliği
-- CI / lint kurulumu
-- Playwright bağımlılık kararı
+- Lint (bilinçli olarak atlandı: kod tabanında lint baseline yok, varsayılan ruff/flake8 ilk koşuda kırmızı olur ve CI'ı görmezden gelmeye alıştırır)
+- Playwright kararı → **verildi**: CI'a eklenmedi, host-only kaldı (hiçbir test `tiktok_browser`'ı import etmiyor)
 - `pytest-timeout` ile per-test timeout (yeni bağımlılık gerektiriyor)
-- Commit / push (repoda ~194 mevcut commit edilmemiş değişiklik var)
+- Push (3 commit lokal `cursor/hybrid-flux-architecture` dalında)
+- `video-worker/video-output/*` üretilmiş artefaktları ve `_tmp_*` scratch dizinleri (bilinçli olarak commit edilmedi)
 - Faz 1+ (ContentJob, state machine, idempotent yayın, kalite kapıları)
+
+### Commit geçmişi
+
+| Commit | İçerik |
+|---|---|
+| `4291c74` | Sessiz video regresyonu, hermetic test paketi, otonom yayın kilidi (9 dosya) |
+| `6fbee82` | İzlenmeyen video-worker kaynak ağacı — HEAD artık import edilebilir (107 dosya, bana ait değil) |
+| `7e3d1cd` | CI workflow (`.github/workflows/ci.yml`) |
+
+> Bu belgeyi güncelleyen commit ayrıca `docs:` önekiyle geçmişte bulunabilir (kendi hash'ini içeremez).
+
+> `6fbee82` zorunluydu: commit edilen `app/pipeline.py`, `app/documentary_v2/__init__.py` ve `pipeline_mode.py`'yi import ediyordu ama bunlar hiç commit edilmemişti. Taze klon import aşamasında patlıyordu, yani CI eklenemezdi.
