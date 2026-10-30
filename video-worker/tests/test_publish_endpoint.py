@@ -436,3 +436,40 @@ def test_publish_success_clears_publishing_job_so_generate_unblocks(
     assert job_store.has_blocking_job(tmp_path) is False
     assert not (tmp_path / "pending.json").exists()
 
+
+
+@patch("app.main.upload_to_facebook")
+@patch("app.main.upload_to_instagram")
+@patch("app.main.upload_to_tiktok")
+@patch("app.main.upload_to_youtube")
+@patch("app.main.upload_to_x")
+@patch("app.main.upload_to_linkedin")
+def test_publish_twice_returns_409_and_does_not_reupload(
+    mock_li, mock_x, mock_yt, mock_tt, mock_ig, mock_fb, tmp_path
+):
+    """Publishing is public and irreversible: a duplicate /publish must be refused."""
+    from app import jobs as job_store
+
+    image_path = tmp_path / "jobdup.png"
+    image_path.write_bytes(b"FAKEPNG")
+    job_store.create_job(tmp_path, "jobdup", kind="image", state="awaiting_approval")
+
+    mock_x.return_value = {"platform": "x", "status": "success", "tweet_id": "t1"}
+    mock_li.return_value = {"platform": "linkedin", "status": "success", "post_id": "p1"}
+
+    body = {
+        "kind": "image",
+        "image_path": str(image_path),
+        "image_filename": "jobdup.png",
+        "caption": "duplicate guard",
+    }
+    with patch("app.main.config") as mock_config:
+        mock_config.MEDIA_DIR = str(tmp_path)
+        first = client.post("/publish", json=body)
+        second = client.post("/publish", json=body)
+
+    assert first.status_code == 200
+    assert second.status_code == 409
+    assert mock_x.call_count == 1
+    assert mock_li.call_count == 1
+

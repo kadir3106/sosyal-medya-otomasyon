@@ -68,3 +68,35 @@ def test_read_pending_falls_back_to_json(tmp_path):
     )
     payload = job_store.read_pending_payload(tmp_path)
     assert payload["title"] == "from-json"
+
+
+def test_claim_for_publish_blocks_duplicate(tmp_path):
+    """Publishing is public and irreversible: a second /publish must not re-upload."""
+    job_store.create_job(tmp_path, "dup1", kind="video", state="awaiting_approval")
+
+    assert job_store.claim_for_publish(tmp_path, "dup1") is True
+    assert job_store.get_job(tmp_path, "dup1")["state"] == "publishing"
+
+    assert job_store.claim_for_publish(tmp_path, "dup1") is False
+
+
+def test_claim_for_publish_blocks_after_success(tmp_path):
+    job_store.create_job(tmp_path, "done1", kind="video", state="awaiting_approval")
+    job_store.mark_done(tmp_path, "done1")
+
+    assert job_store.claim_for_publish(tmp_path, "done1") is False
+
+
+def test_claim_for_publish_allows_retry_after_failure(tmp_path):
+    """The Telegram 'Tekrar dene' button republishes from a failed job."""
+    job_store.create_job(tmp_path, "fail1", kind="video", state="publishing")
+    job_store.mark_failed(tmp_path, "fail1", "all_platforms_failed")
+
+    assert job_store.claim_for_publish(tmp_path, "fail1") is True
+    assert job_store.get_job(tmp_path, "fail1")["state"] == "publishing"
+
+
+def test_claim_for_publish_allows_unknown_job(tmp_path):
+    """Image/legacy flows never create a job row; refusing them would break publishing."""
+    assert job_store.claim_for_publish(tmp_path, "never-created") is True
+

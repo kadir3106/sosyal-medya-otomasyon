@@ -6,7 +6,7 @@ from typing import Callable
 import requests
 
 from app import jobs as job_store
-from app.errors import AllPlatformsFailedError
+from app.errors import AllPlatformsFailedError, AlreadyPublishedError
 
 API_URL = "https://api.telegram.org/bot{token}/{method}"
 POLL_TIMEOUT_SECONDS = 25
@@ -241,6 +241,14 @@ def _publish_and_report(
     title = payload.get("title") or payload.get("caption", "")
     try:
         result = publish_fn(payload)
+    except AlreadyPublishedError as exc:
+        send_message(
+            token,
+            chat_id,
+            f'⚠️ "{title}" — bu iş zaten yayınlanmış/yayınlanıyor (job {exc.job_id}). '
+            "Çift yayını önlemek için atlandı.",
+        )
+        return
     except AllPlatformsFailedError as exc:
         lines = [f'❌ "{title}" — tüm platformlar başarısız.']
         lines += [f"  {r['platform']}: {r.get('error', 'hata')}" for r in exc.results]

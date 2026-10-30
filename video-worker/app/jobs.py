@@ -175,6 +175,26 @@ def has_blocking_job(media_dir: str | Path) -> bool:
     return row is not None
 
 
+def claim_for_publish(media_dir: str | Path, job_id: str) -> bool:
+    """Atomically move a job to 'publishing'; False if it is already publishing/done.
+
+    Publishing is public and irreversible, so a duplicate /publish (n8n retry,
+    Telegram double-callback) must not upload twice. 'failed' stays claimable so
+    the "Tekrar dene" button still works. An unknown job is let through: image and
+    legacy flows never create a job row, and refusing them would break publishing.
+    """
+    with _connect(media_dir) as conn:
+        cur = conn.execute(
+            "UPDATE jobs SET state='publishing', updated_at=? "
+            "WHERE id=? AND state NOT IN ('publishing', 'done')",
+            (_utc_now(), job_id),
+        )
+        if cur.rowcount:
+            return True
+        known = conn.execute("SELECT 1 FROM jobs WHERE id=?", (job_id,)).fetchone()
+    return known is None
+
+
 def mark_done(media_dir: str | Path, job_id: str) -> None:
     update_job(media_dir, job_id, state="done", error="")
 

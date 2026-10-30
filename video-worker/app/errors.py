@@ -7,6 +7,15 @@ class AllPlatformsFailedError(Exception):
         self.results = results
 
 
+class AlreadyPublishedError(Exception):
+    """Aynı iş için ikinci /publish — yayın public ve geri alınamaz, bu yüzden reddedilir."""
+
+    def __init__(self, job_id: str, state: str = ""):
+        super().__init__(f"Job {job_id} is already {state or 'published/publishing'}")
+        self.job_id = job_id
+        self.state = state
+
+
 class FalAuthBillingError(Exception):
     """Fal.ai (Flux/Kling) 401/403 veya bakiye/yetki hatası — stok fallback yasak, job hard-fail."""
 

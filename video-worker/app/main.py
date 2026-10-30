@@ -23,7 +23,7 @@ from app.analytics import build_weekly_report
 from app.catchup import mark_run_today, maybe_catch_up
 from app.config import config
 from app.daily_digest import run_digest_loop
-from app.errors import AllPlatformsFailedError
+from app.errors import AllPlatformsFailedError, AlreadyPublishedError
 from app.image_gen import generate_image_content, render_card
 from app import jobs as job_store
 from app.joblog import log_event
@@ -416,8 +416,11 @@ def _run_publish(payload: dict) -> dict:
     job_id = Path(payload.get("video_filename") or payload.get("image_filename") or "unknown").stem
     media_dir = Path(config.MEDIA_DIR)
 
+    # Claim before any upload: a duplicate /publish would post publicly twice.
+    if not job_store.claim_for_publish(media_dir, job_id):
+        raise AlreadyPublishedError(job_id, job_store.get_job(media_dir, job_id)["state"])
+
     if kind == "image":
-        job_store.update_job(media_dir, job_id, state="publishing")
         tasks = [
             (
                 "x",
@@ -461,8 +464,6 @@ def _run_publish(payload: dict) -> dict:
             or (Path(split_path).name if split_path else "")
             or payload.get("video_filename", "")
         )
-
-        job_store.update_job(media_dir, job_id, state="publishing")
 
         tasks = [
             (
@@ -641,6 +642,8 @@ def _run_cleanup(filename: str) -> None:
 def publish(payload: PublishRequest):
     try:
         return _run_publish(payload.model_dump())
+    except AlreadyPublishedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except AllPlatformsFailedError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
