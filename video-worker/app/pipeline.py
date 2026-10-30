@@ -18,11 +18,17 @@ from app.render import (
     scene_transition_times,
 )
 from app.script_gen import generate_script
+from app.script_quality import merge_into_script_dict, refine_script
 from app.stock_media import extract_keywords, fetch_stock_clips, resolve_scene_queries
 
 from app.subtitles import write_ass
 from app.topics import release_topic, resolve_en_topics_path, select_next_topic
 from app.tts import synthesize_speech
+from app.phase3_profiles import (
+    build_music_profile,
+    build_narration_profile,
+    build_pacing_profile,
+)
 
 # Sahne süresi/geçiş süresi — render.py ile AYNI değerler kullanılmalı.
 SCENE_CLIP_DURATION = 2.2
@@ -199,6 +205,17 @@ def _generate_video_sync(job_id: str, topic: str | None = None) -> dict:
     started_at = time.monotonic()
     from_pool = topic is None
     try:
+        from app.documentary_v2 import pipeline_mode_diagnostics
+
+        _pm = pipeline_mode_diagnostics()
+        print(
+            f"[pipeline] job={job_id} pipeline_mode={_pm['pipeline_mode']} "
+            f"DOCUMENTARY_ENGINE_V2={_pm['documentary_engine_v2']} "
+            f"DIRECTOR_ENABLED={_pm['director_enabled']}",
+            flush=True,
+        )
+        log_event(job_id, "pipeline_mode", **_pm)
+
         job_store.create_job(
             media_dir, job_id, kind="video", state="generating", topic=topic
         )
@@ -251,11 +268,85 @@ def _generate_video_sync(job_id: str, topic: str | None = None) -> dict:
             seconds=round(time.monotonic() - stage_started, 1),
         )
 
+        # Script quality + fact verification (before TTS). Fail-closed on HIGH risk.
+        stage_started = time.monotonic()
+        raw_before_quality = script_data.get("script") or ""
+        quality_result = refine_script(raw_before_quality, topic=topic)
+        script_data = merge_into_script_dict(script_data, quality_result)
+        if not (script_data.get("script") or "").strip():
+            raise RuntimeError(
+                "script_quality_empty_after_verification — refusing to TTS/publish "
+                "unsupported high-risk claims"
+            )
+        # Persist trace outside work_dir (work_dir is deleted in finally).
+        try:
+            trace_path = media_dir / f"SCRIPT_QUALITY_TRACE_{job_id}.json"
+            trace_path.write_text(
+                json.dumps(quality_result.to_dict(), indent=2, ensure_ascii=False)[:400000],
+                encoding="utf-8",
+            )
+        except Exception as trace_err:
+            print(f"[pipeline] script quality trace write failed: {trace_err}", flush=True)
+        try:
+            sd_path = media_dir / f"SOURCE_DIVERSITY_TRACE_{job_id}.json"
+            sd_path.write_text(
+                json.dumps(
+                    {
+                        "job_id": job_id,
+                        "topic": topic,
+                        "script_quality": quality_result.to_dict(),
+                        "story_consistency": quality_result.story_consistency,
+                        "replacement_intents": quality_result.replacement_intents,
+                        "replacement_research": quality_result.replacement_research,
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                )[:400000],
+                encoding="utf-8",
+            )
+        except Exception as sd_err:
+            print(f"[pipeline] source diversity early trace failed: {sd_err}", flush=True)
+        log_event(
+            job_id,
+            "script_quality_done",
+            word_count=len(script_data["script"].split()),
+            estimated_duration=quality_result.estimated_duration,
+            verification_outage=quality_result.verification_outage,
+            review_required=quality_result.review_required,
+            llm_calls=quality_result.llm_calls,
+            search_calls=quality_result.search_calls,
+            decisions=(quality_result.verification_summary or {}).get("decisions"),
+            seconds=round(time.monotonic() - stage_started, 1),
+        )
+
+        hook_text = (
+            quality_result.hook
+            or script_data.get("hook_selected")
+            or _extract_hook(script_data["script"])
+        )
+        narration_profile = build_narration_profile(
+            topic=topic,
+            script=script_data.get("script") or "",
+            hook=hook_text or "",
+            concrete_nouns=script_data.get("concrete_nouns"),
+        )
+        music_profile = build_music_profile(
+            topic=topic, script=script_data.get("script") or ""
+        )
+        pacing_profile = build_pacing_profile(script=script_data.get("script") or "")
+        phase3_audio = bool(getattr(config, "PHASE3_AUDIO_ENABLED", False))
+        phase3_caps = bool(getattr(config, "PHASE3_CAPTIONS_ENABLED", False))
+        phase3_music = bool(getattr(config, "PHASE3_MUSIC_ENABLED", False))
+        phase3_ret = bool(getattr(config, "PHASE3_RETENTION_ENABLED", False))
+
         audio_path = str(work_dir / "speech.mp3")
         stage_started = time.monotonic()
         # synthesize_speech is async; we're already in a worker thread so
         # asyncio.run is safe (no running loop in this thread).
         tts_meta: dict = {}
+        voice_settings = (
+            narration_profile.elevenlabs_voice_settings() if phase3_audio else None
+        )
         word_boundaries = asyncio.run(
             synthesize_speech(
                 script_data["script"],
@@ -263,6 +354,7 @@ def _generate_video_sync(job_id: str, topic: str | None = None) -> dict:
                 voice=voice,
                 rate=config.VIDEO_VOICE_RATE,
                 meta_out=tts_meta,
+                voice_settings=voice_settings,
             )
         )
         tts_provider = tts_meta.get("provider") or "unknown"
@@ -271,13 +363,13 @@ def _generate_video_sync(job_id: str, topic: str | None = None) -> dict:
             word_count=len(word_boundaries),
             tts=tts_provider,
             edge_reason=tts_meta.get("edge_reason"),
+            phase3_audio=phase3_audio,
             seconds=round(time.monotonic() - stage_started, 1),
         )
 
         # TikTok / Reels tarzı dinamik kelime vurgulamalı altyazı + hook overlay.
         # Director açıkken Hook Director planı clip fetch sonrası ASS'i yeniden yazar
         # (kısa punch + karaoke gecikmesi); legacy yol aynı kalır.
-        hook_text = script_data.get("hook_selected") or _extract_hook(script_data["script"])
         director_on_early = os.environ.get("DIRECTOR_ENABLED", "false").lower() == "true"
         subtitle_path = write_ass(
             word_boundaries,
@@ -287,6 +379,8 @@ def _generate_video_sync(job_id: str, topic: str | None = None) -> dict:
             add_emojis=getattr(config, "ENABLE_SUBTITLE_EMOJIS", False) is True,
             hook_text=None if director_on_early else hook_text,
             hook_seconds=2.5,
+            phase3=phase3_caps and not director_on_early,
+            emphasis_words=narration_profile.emphasis if phase3_caps else None,
         )
 
         # Kalite telemetrisi (hook / TTS / motor) — Telegram + pending.json.
@@ -297,7 +391,29 @@ def _generate_video_sync(job_id: str, topic: str | None = None) -> dict:
             "tts": tts_provider,
             "engine": str(getattr(config, "VISUAL_ENGINE", "unknown")),
             "concrete_nouns": script_data.get("concrete_nouns") or [],
+            "phase3": {
+                "audio": phase3_audio,
+                "captions": phase3_caps,
+                "music": phase3_music,
+                "retention": phase3_ret,
+            },
+            "narration_profile": narration_profile.to_dict(),
+            "music_profile": music_profile.to_dict(),
+            "pacing_profile": pacing_profile.to_dict(),
+            "script_quality": {
+                "estimated_duration": quality_result.estimated_duration,
+                "verification_summary": quality_result.verification_summary,
+                "llm_calls": quality_result.llm_calls,
+                "search_calls": quality_result.search_calls,
+                "review_required": quality_result.review_required,
+                "loop_strategy": quality_result.loop_strategy,
+                "raw_word_count": len(raw_before_quality.split()),
+                "final_word_count": len((script_data.get("script") or "").split()),
+            },
         }
+        if quality_result.review_required:
+            quality["review_required"] = True
+            quality["review_reason"] = "script_verification_outage_or_high_risk_unknown"
         if tts_provider == "edge":
             quality["warning"] = "tts_edge_fallback"
             log_event(
@@ -310,7 +426,20 @@ def _generate_video_sync(job_id: str, topic: str | None = None) -> dict:
         video_path = str(media_dir / video_filename)
 
         bgm_dir = config.BGM_DIR or str(media_dir / "audio" / "bgm")
-        bgm_path = get_or_create_bgm(bgm_dir)
+        bgm_selection: dict = {}
+        bgm_path = get_or_create_bgm(
+            bgm_dir,
+            vocals_allowed=bool(music_profile.vocals_allowed) if phase3_music else True,
+            prefer_instrumental=phase3_music,
+            mood=str(music_profile.mood or "") if phase3_music else "",
+            allow_silence=True,
+            selection_out=bgm_selection,
+        )
+        bgm_volume = float(music_profile.bgm_volume) if phase3_music else 0.15
+        quality["bgm_selection"] = bgm_selection
+        if not bgm_path:
+            quality["bgm_silence"] = True
+            log_event(job_id, "bgm_silence", reason=bgm_selection.get("reason"))
 
         thumbnail_filename = f"{job_id}_thumb.png"
         thumbnail_path = str(media_dir / thumbnail_filename)
@@ -399,6 +528,14 @@ def _generate_video_sync(job_id: str, topic: str | None = None) -> dict:
                 from app.director import plan_and_fetch_scenes
 
                 used_stock_clips = True
+                # Story consistency from script quality → director gate
+                sq = script_data.get("script_quality") or {}
+                visual_stats["story_consistency"] = sq.get("story_consistency") or {}
+                if sq.get("story_consistency", {}).get("status") == "FAIL":
+                    quality["review_required"] = True
+                    quality["review_reason"] = quality.get("review_reason") or (
+                        "story_consistency_fail"
+                    )
                 try:
                     clip_paths = plan_and_fetch_scenes(
                         scene_count=scene_count,
@@ -414,42 +551,141 @@ def _generate_video_sync(job_id: str, topic: str | None = None) -> dict:
                     _notify_fal_auth_billing_fail(job_id, fal_exc)
                     raise
                 quality["engine"] = "director"
-                # Hook Director: short punch overlay; delay karaoke to avoid stacking.
+                # Phase 3.1: static top title OFF unless explicitly enabled + provided.
                 hook_plan = visual_stats.get("hook_director") or {}
-                punch = str(hook_plan.get("overlay_text") or "").strip()
-                if not punch:
-                    punch = " ".join(str(hook_text or "").split()[:6])
-                hook_secs = float(hook_plan.get("hook_seconds") or 1.8)
-                karaoke_start = float(
-                    hook_plan.get("karaoke_start_seconds") or hook_secs
+                punch = ""
+                hook_title_on = bool(
+                    getattr(config, "PHASE3_HOOK_TITLE_ENABLED", False)
                 )
+                if hook_title_on:
+                    punch = str(hook_plan.get("overlay_text") or "").strip()
+                hook_secs = float(hook_plan.get("hook_seconds") or 1.0)
                 write_ass(
                     word_boundaries,
                     subtitle_path,
                     words_per_cue=2,
                     highlight=True,
                     add_emojis=getattr(config, "ENABLE_SUBTITLE_EMOJIS", False) is True,
-                    hook_text=punch,
-                    # Phase 2.2: short punch + fade; karaoke is primary.
-                    hook_seconds=min(hook_secs, 1.6),
+                    hook_text=punch or None,
+                    hook_seconds=min(hook_secs, 1.2) if punch else 0.0,
                     karaoke_start_seconds=0.0,
-                    hook_max_words=5,
+                    hook_max_words=4,
+                    phase3=phase3_caps,
+                    emphasis_words=narration_profile.emphasis if phase3_caps else None,
                 )
-                quality["hook"] = punch
-                quality["hook_director"] = hook_plan
+                # Refresh pacing notes from Director beat roles (no visual rewrite).
+                roles = []
+                for b in visual_stats.get("word_to_visual") or []:
+                    roles.append(str(b.get("narrative_role") or b.get("gate_reason") or ""))
+                pacing_profile = build_pacing_profile(
+                    script=script_data.get("script") or "",
+                    beat_roles=roles,
+                )
+                quality["pacing_profile"] = pacing_profile.to_dict()
+                quality["hook"] = hook_text
+                quality["hook_director"] = {**(hook_plan or {}), "overlay_text": punch}
+                quality["hook_overlay_duration"] = float(hook_secs) if punch else 0.0
                 quality["word_to_visual"] = visual_stats.get("word_to_visual")
+                quality["retention_events"] = visual_stats.get("retention_events") or []
+                quality["person_retrieval"] = visual_stats.get("person_retrieval") or []
+                quality["phase31"] = True
+                quality["storyboard_before_retrieval"] = visual_stats.get(
+                    "storyboard_before_retrieval"
+                )
+                quality["storyboard_coverage"] = visual_stats.get("storyboard_coverage")
+                quality["visual_information_units"] = visual_stats.get(
+                    "visual_information_units"
+                )
+                quality["no_slideshow_gate"] = visual_stats.get("no_slideshow_gate")
+                quality["source_asset_stats"] = visual_stats.get("source_asset_stats")
+                quality["shot_count"] = visual_stats.get("shot_count")
+                quality["unique_source_asset_count"] = visual_stats.get(
+                    "unique_source_asset_count"
+                )
+                quality["important_beat_coverage"] = visual_stats.get(
+                    "important_beat_coverage"
+                )
+                quality["story_consistency"] = visual_stats.get(
+                    "story_consistency"
+                ) or sq.get("story_consistency")
+                gate = visual_stats.get("no_slideshow_gate") or {}
+                if gate.get("status") == "FAIL":
+                    quality["review_required"] = True
+                    quality["review_reason"] = "no_slideshow_gate_fail:" + ",".join(
+                        gate.get("reasons") or []
+                    )
+                elif gate.get("status") == "REVIEW_REQUIRED":
+                    quality["review_required"] = True
+                    quality["review_reason"] = quality.get("review_reason") or (
+                        "no_slideshow_gate_review:" + ",".join(gate.get("reasons") or [])
+                    )
                 log_event(
                     job_id, "director_clips_ready",
                     clip_count=len(clip_paths),
                     beat_count=visual_stats.get("beat_count"),
                     scene_relevance=visual_stats.get("scene_relevance"),
                     director_plan=visual_stats.get("director_plan"),
-                    hook_director=hook_plan,
+                    hook_director=quality["hook_director"],
                     word_to_visual=visual_stats.get("word_to_visual"),
+                    retention_events=visual_stats.get("retention_events"),
+                    person_retrieval=visual_stats.get("person_retrieval"),
                     stock_cache_reuse_ratio=visual_stats.get("stock_cache_reuse_ratio"),
                     ai_image_used=visual_stats.get("ai_image_used"),
+                    no_slideshow_gate=gate,
+                    shot_count=visual_stats.get("shot_count"),
+                    unique_source_asset_count=visual_stats.get(
+                        "unique_source_asset_count"
+                    ),
+                    important_beat_coverage=visual_stats.get("important_beat_coverage"),
                     seconds=round(time.monotonic() - stage_started, 1),
                 )
+                try:
+                    sd_full = media_dir / f"SOURCE_DIVERSITY_TRACE_{job_id}.json"
+                    prev = {}
+                    if sd_full.is_file():
+                        try:
+                            prev = json.loads(sd_full.read_text(encoding="utf-8"))
+                        except Exception:
+                            prev = {}
+                    prev.update(
+                        {
+                            "job_id": job_id,
+                            "topic": topic,
+                            "final_script": script_data.get("script"),
+                            "shot_count": visual_stats.get("shot_count"),
+                            "unique_source_asset_count": visual_stats.get(
+                                "unique_source_asset_count"
+                            ),
+                            "source_asset_stats": visual_stats.get("source_asset_stats"),
+                            "important_beat_coverage": visual_stats.get(
+                                "important_beat_coverage"
+                            ),
+                            "beat_coverage": visual_stats.get("beat_coverage"),
+                            "important_beat_retry": visual_stats.get(
+                                "important_beat_retry"
+                            ),
+                            "beat_recovery": visual_stats.get("beat_recovery"),
+                            "no_slideshow_gate": gate,
+                            "story_consistency": quality.get("story_consistency")
+                            or visual_stats.get("story_consistency"),
+                            "storyboard_coverage": visual_stats.get(
+                                "storyboard_coverage"
+                            ),
+                            "visual_information_units": visual_stats.get(
+                                "visual_information_units"
+                            ),
+                            "word_to_visual": visual_stats.get("word_to_visual"),
+                            "person_retrieval": visual_stats.get("person_retrieval"),
+                        }
+                    )
+                    payload = json.dumps(prev, indent=2, ensure_ascii=False)[:500000]
+                    sd_full.write_text(payload, encoding="utf-8")
+                    # Also write uncovered-beat recovery trace alias
+                    (media_dir / f"UNCOVERED_BEAT_RECOVERY_TRACE_{job_id}.json").write_text(
+                        payload, encoding="utf-8"
+                    )
+                except Exception as sd_err:
+                    print(f"[pipeline] source diversity trace update failed: {sd_err}", flush=True)
             elif visual_prompts and engine != "stock":
                 from app.ai_video_engine import generate_video_scenes
                 try:
@@ -530,7 +766,14 @@ def _generate_video_sync(job_id: str, topic: str | None = None) -> dict:
             if config.ENABLE_SFX:
                 from app.sfx import build_sfx_track
                 try:
-                    # SFX, render'ın GERÇEK geçiş anlarına ve kelime zaman damgalarına oturtulur
+                    audio_cues = []
+                    t_acc = 0.0
+                    for b in (visual_stats.get("word_to_visual") or []):
+                        dur = float(b.get("duration") or 0) or 0.0
+                        cue = b.get("audio_cue") or b.get("emphasis_cue")
+                        if cue and str(cue).lower() not in ("", "none", "null"):
+                            audio_cues.append({"t": t_acc + max(dur * 0.15, 0.05), "kind": cue})
+                        t_acc += dur
                     sfx_path = build_sfx_track(
                         audio_duration,
                         clip_duration=SCENE_CLIP_DURATION,
@@ -540,7 +783,10 @@ def _generate_video_sync(job_id: str, topic: str | None = None) -> dict:
                             durations, SCENE_XFADE_DURATION
                         ),
                         word_boundaries=word_boundaries,
+                        phase3=phase3_ret,
+                        audio_cues=audio_cues if phase3_ret else None,
                     )
+                    quality["sfx_cues"] = len(audio_cues)
                 except Exception as sfx_err:
                     log_event(job_id, "sfx_failed", error=str(sfx_err))
 
@@ -555,7 +801,7 @@ def _generate_video_sync(job_id: str, topic: str | None = None) -> dict:
                 clip_duration=SCENE_CLIP_DURATION,
                 xfade_duration=SCENE_XFADE_DURATION,
                 bgm_path=bgm_path,
-                bgm_volume=0.15,
+                bgm_volume=bgm_volume,
                 cinematic_grade=config.CINEMATIC_GRADE,
                 sfx_path=sfx_path,
                 # Stock mp4 already has camera motion. Live scale-KenBurns + many
@@ -563,6 +809,10 @@ def _generate_video_sync(job_id: str, topic: str | None = None) -> dict:
                 # Still-image / Flux path applies Ken Burns inside ai_visuals instead.
                 apply_zoompan=False,
                 stats_out=render_stats,
+                duck_bgm=phase3_music,
+                duck_threshold=float(music_profile.duck_threshold),
+                duck_ratio=float(music_profile.duck_ratio),
+                loudnorm=phase3_audio,
             )
             log_event(
                 job_id, "render_done",
@@ -680,6 +930,9 @@ def _generate_video_sync(job_id: str, topic: str | None = None) -> dict:
             "description": script_data["description"],
             "tags": script_data["tags"],
             "pinned_comment": script_data.get("pinned_comment", ""),
+            "script": script_data.get("script") or "",
+            "raw_script": script_data.get("raw_script") or raw_before_quality,
+            "final_script": script_data.get("final_script") or script_data.get("script") or "",
             "quality": quality,
         }
         job_store.update_job(
@@ -692,6 +945,21 @@ def _generate_video_sync(job_id: str, topic: str | None = None) -> dict:
             error="",
         )
         job_store.write_pending_mirror(media_dir, result)
+        # Stage A: joinable ProductionManifest (no behavioral change).
+        try:
+            from app.documentary_v2 import emit_legacy_job_manifest
+
+            emit_legacy_job_manifest(
+                media_dir=media_dir,
+                job_id=job_id,
+                topic=topic or "",
+                script_data=script_data,
+                quality=quality,
+                result=result,
+                audio_duration=locals().get("audio_duration"),
+            )
+        except Exception as _manifest_err:
+            print(f"[pipeline] Stage A manifest skipped: {_manifest_err}", flush=True)
         # Human gate: send approve/reject even when caller is curl /generate
         # (n8n also sendVideo — duplicate OK; never auto-publish).
         _notify_telegram_awaiting_approval(result)

@@ -95,7 +95,7 @@ async def test_generate_video_persists_quality_telemetry(
         "concrete_nouns": ["Rolex", "crown"],
     }
 
-    async def _tts(text, path, voice=None, rate=None, meta_out=None):
+    async def _tts(text, path, voice=None, rate=None, meta_out=None, voice_settings=None):
         if meta_out is not None:
             meta_out["provider"] = "elevenlabs"
         return [{"offset": 0, "duration": 10_000_000, "text": "They"}]
@@ -178,7 +178,7 @@ async def test_generate_video_marks_edge_tts_warning(
         "tags": [],
     }
 
-    async def _tts(text, path, voice=None, rate=None, meta_out=None):
+    async def _tts(text, path, voice=None, rate=None, meta_out=None, voice_settings=None):
         if meta_out is not None:
             meta_out["provider"] = "edge"
             meta_out["edge_reason"] = "missing_key"

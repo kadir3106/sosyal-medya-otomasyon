@@ -18,7 +18,8 @@ def test_generate_ai_image_success(mock_urlopen, tmp_path):
     mock_urlopen.return_value = mock_resp
 
     target = tmp_path / "test.jpg"
-    res = generate_ai_image("dark cinematic street", target)
+    # prefer_fal=False: Fal path needs a live key; this test covers the offline fallback.
+    res = generate_ai_image("dark cinematic street", target, prefer_fal=False)
 
     assert res == target
     assert target.exists()
@@ -30,7 +31,7 @@ def test_generate_ai_image_fallback_on_error(mock_urlopen, tmp_path):
     mock_urlopen.side_effect = Exception("Network timeout")
 
     target = tmp_path / "fallback.jpg"
-    res = generate_ai_image("dark cinematic street", target)
+    res = generate_ai_image("dark cinematic street", target, prefer_fal=False)
 
     assert res == target
     assert target.exists()

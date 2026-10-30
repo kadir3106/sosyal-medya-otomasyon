@@ -140,7 +140,16 @@ async def execute_daily_run(use_trend: bool = False):
                 break
 
         if not approved:
-            print("⏱️ Zaman aşımı: Yanıt gelmedi, otonom yayına devam ediliyor.")
+            print("⏱️ Zaman aşımı: Telegram'dan yanıt gelmedi.")
+
+    # Yayın public ve geri alınamaz; onay atlanarak çalıştırılmasın.
+    # shortcut: tek env bayrağı, platform bazlı politika yok — onaylar ContentJob'a taşınınca yükselt.
+    if os.environ.get("ALLOW_AUTONOMOUS_PUBLISH", "").lower() != "true":
+        print(
+            "🔒 ALLOW_AUTONOMOUS_PUBLISH != true — video üretildi ama YAYINLANMADI. "
+            "Yayın için /publish onay akışını kullanın."
+        )
+        return None
 
     # 2. Çoklu Platform Yayınlama (YouTube Shorts öncelikli)
     print("\n📺 [2/3] Sosyal Medya Kanallarına Yayınlanıyor...")
