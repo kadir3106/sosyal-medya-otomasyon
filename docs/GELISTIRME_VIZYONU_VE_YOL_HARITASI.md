@@ -680,14 +680,23 @@ Faz 0'ın P0 çekirdeği uygulandı ve doğrulandı.
 | 8 | İkinci `/publish` artık reddediliyor | `video-worker/app/jobs.py`, `app/main.py`, `app/errors.py`, `app/telegram_bot.py` | Çift tıklama / n8n retry / Telegram double-callback aynı videoyu **iki kez public yayınlayamıyor** (409) |
 | 9 | Onay butonları `job_id`'ye bağlandı | `video-worker/app/telegram_bot.py`, `app/pipeline.py` | Eski bir mesajdaki "Onayla"ya basmak **yanlış videoyu yayınlayamıyor** |
 | 10 | Onay video dosyasının **hash'ine** bağlandı | `app/pipeline.py`, `app/main.py`, `app/publish_log.py`, `app/errors.py` | Aynı `job_id` altında yeniden render edilen farklı içerik eski onayla **yayınlanamıyor** (409) |
+| 11 | Yükleme zaman aşımı "başarısız" değil **"bilinmiyor"** | `app/main.py`, `app/errors.py`, `app/telegram_bot.py` | Zaman aşımında retry butonu sunulmuyor → **zaten yayınlanmış video ikinci kez yüklenemiyor** |
 
 ### Ölçülen sonuç
 
 | Metrik | Önce | Sonra |
 |---|---|---|
-| Tam paket | **tamamlanamıyordu** (4 dosya askıda) | **620 passed, 3 skipped, 0 failed** |
-| Süre | belirsiz (askı) | **110 sn** |
+| Tam paket | **tamamlanamıyordu** (4 dosya askıda) | **623 passed, 3 skipped, 0 failed** |
+| Süre | belirsiz (askı) | **115 sn** |
 | Başarısız test | 5 | **0** |
+
+### Belirsiz sonuç ayrımı (madde 11)
+
+`_run_parallel_uploads` **her** exception'ı — `fut.result(timeout=300)` zaman aşımı dahil — `status="error"` olarak kaydediyordu. Ama thread bekleme bırakıldıktan sonra da çalışmaya devam eder, yani video platformda **yayınlanmış olabilir**. Tümü "error" görününce `main` dosyayı `failed/`'a taşıyıp retry sidecar yazıyordu; Telegram'daki "🔁 Tekrar dene" butonu **zaten yayınlanmış videoyu** yeniden yüklüyordu. `claim_for_publish` bunu kapatamaz, çünkü `failed` durumunu meşru retry için bilinçli olarak claim edilebilir bırakıyoruz.
+
+- Zaman aşımı artık `status="unknown"` (gerçek exception `"error"` kalıyor)
+- Herhangi bir `unknown` sonucu, all-failed dalına girmeden önce kısa devre yapıyor: **retry sidecar yazılmıyor**, medya dosyası taşınmıyor/silinmiyor
+- `PublishOutcomeUnknownError` → HTTP **502**; Telegram yolu retry butonu olmadan "platformu kontrol edin, tekrar denemeyin" diyor
 
 ### Artefakt hash doğrulaması (madde 10)
 
@@ -728,7 +737,7 @@ Askı sanılan şey aslında **gerçek ağ retry'ı**ydı: `.env` içindeki `DIR
 - Lint (bilinçli olarak atlandı: kod tabanında lint baseline yok, varsayılan ruff/flake8 ilk koşuda kırmızı olur ve CI'ı görmezden gelmeye alıştırır)
 - Playwright kararı → **verildi**: CI'a eklenmedi, host-only kaldı (hiçbir test `tiktok_browser`'ı import etmiyor)
 - `pytest-timeout` ile per-test timeout (yeni bağımlılık gerektiriyor)
-- Push (7 commit lokal `cursor/hybrid-flux-architecture` dalında)
+- Push (8 commit lokal `cursor/hybrid-flux-architecture` dalında)
 - `video-worker/video-output/*` üretilmiş artefaktları ve `_tmp_*` scratch dizinleri (bilinçli olarak commit edilmedi)
 - Faz 1'in geri kalanı (ContentJob artefakt manifesti, publication durum sorgulama, kalite kapıları)
 
@@ -743,6 +752,7 @@ Askı sanılan şey aslında **gerçek ağ retry'ı**ydı: `.env` içindeki `DIR
 | `7200d5f` | Yayın idempotency: `claim_for_publish` + 409 (6 dosya) |
 | `bdf50e4` | Onay butonları `job_id`'ye bağlandı (3 dosya) |
 | `ad944cb` | Onay video hash'ine bağlandı (7 dosya) |
+| `a615fa6` | Zaman aşımı "bilinmiyor" olarak ayrıldı (4 dosya) |
 
 > Bu belgeyi güncelleyen commit ayrıca `docs:` önekiyle geçmişte bulunabilir (kendi hash'ini içeremez).
 
