@@ -682,14 +682,31 @@ Faz 0'ın P0 çekirdeği uygulandı ve doğrulandı.
 | 10 | Onay video dosyasının **hash'ine** bağlandı | `app/pipeline.py`, `app/main.py`, `app/publish_log.py`, `app/errors.py` | Aynı `job_id` altında yeniden render edilen farklı içerik eski onayla **yayınlanamıyor** (409) |
 | 11 | Yükleme zaman aşımı "başarısız" değil **"bilinmiyor"** | `app/main.py`, `app/errors.py`, `app/telegram_bot.py` | Zaman aşımında retry butonu sunulmuyor → **zaten yayınlanmış video ikinci kez yüklenemiyor** |
 | 12 | Sahte zaman aşımı düzeltildi — tamamlanan yükleme artık okunuyor | `app/main.py` | Başarılı yayın "bilinmiyor" diye raporlanmıyor; operatör hayalet aramıyor |
+| 13 | Fan-out bütçesi yayıncı timeout'larıyla hizalandı (300 → 660 sn) | `app/main.py` | 600 sn süren YouTube/TikTok/Meta yüklemeleri artık **ortasında kesilmiyor** |
 
 ### Ölçülen sonuç
 
 | Metrik | Önce | Sonra |
 |---|---|---|
-| Tam paket | **tamamlanamıyordu** (4 dosya askıda) | **624 passed, 3 skipped, 0 failed** |
-| Süre | belirsiz (askı) | **85 sn** |
+| Tam paket | **tamamlanamıyordu** (4 dosya askıda) | **625 passed, 3 skipped, 0 failed** |
+| Süre | belirsiz (askı) | **72 sn** |
 | Başarısız test | 5 | **0** |
+
+### Bütçe / yayıncı timeout uyumsuzluğu (madde 13)
+
+Ölçüm: `youtube.py:64`, `tiktok.py:63` ve `meta.py:130` video gövdesini **`timeout=600`** ile yüklüyor; fan-out bütçesi ise `_PUBLISH_TIMEOUT_SECONDS = 300` idi.
+
+```
+largest publisher request timeout: 600
+current budget: 660
+OLD budget 300 would have been cut off: True
+```
+
+Yani 300 sn'yi aşan **her** video yüklemesi garanti olarak ortasında kesiliyor ve yanlış `"unknown"` raporlanıyordu — madde 11 ve 12'de kovaladığım hayaletin asıl kaynağı buydu.
+
+- Bütçe **660 sn** (600 sn tek PUT + token/init/poll/publish için 60 sn pay)
+- İki değerin tekrar ayrışmaması için **sözleşme testi** eklendi: `app/publishers/*.py` içindeki en büyük `timeout=` değerini tarar, bütçe onu geçmiyorsa test kırılır
+- `tiktok_browser.py` hariç: host-only ve oradaki `timeout=` değerleri Playwright DOM beklemeleri (milisaniye), HTTP timeout değil
 
 ### Sahte zaman aşımı bulgusu (madde 12)
 
@@ -756,7 +773,7 @@ Askı sanılan şey aslında **gerçek ağ retry'ı**ydı: `.env` içindeki `DIR
 - Lint (bilinçli olarak atlandı: kod tabanında lint baseline yok, varsayılan ruff/flake8 ilk koşuda kırmızı olur ve CI'ı görmezden gelmeye alıştırır)
 - Playwright kararı → **verildi**: CI'a eklenmedi, host-only kaldı (hiçbir test `tiktok_browser`'ı import etmiyor)
 - `pytest-timeout` ile per-test timeout (yeni bağımlılık gerektiriyor)
-- Push (9 commit lokal `cursor/hybrid-flux-architecture` dalında)
+- Push (10 commit lokal `cursor/hybrid-flux-architecture` dalında)
 - `video-worker/video-output/*` üretilmiş artefaktları ve `_tmp_*` scratch dizinleri (bilinçli olarak commit edilmedi)
 - Faz 1'in geri kalanı (ContentJob artefakt manifesti, publication durum sorgulama, kalite kapıları)
 - Zombi upload thread'leri için süreç düzeyinde izolasyon (`shutdown(wait=False)` artık beklemiyor; thread'ler süreç bitene kadar yaşayabilir)
@@ -774,6 +791,7 @@ Askı sanılan şey aslında **gerçek ağ retry'ı**ydı: `.env` içindeki `DIR
 | `ad944cb` | Onay video hash'ine bağlandı (7 dosya) |
 | `a615fa6` | Zaman aşımı "bilinmiyor" olarak ayrıldı (4 dosya) |
 | `3af7cc5` | Sahte zaman aşımı düzeltildi; tamamlanan yükleme okunuyor (2 dosya) |
+| `efa6e56` | Bütçe yayıncı timeout'larıyla hizalandı + sözleşme testi (2 dosya) |
 
 > Bu belgeyi güncelleyen commit ayrıca `docs:` önekiyle geçmişte bulunabilir (kendi hash'ini içeremez).
 
