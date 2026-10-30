@@ -1,12 +1,38 @@
+import re
 import time
+from pathlib import Path
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
 from app.config import config
-from app.main import _run_parallel_uploads, app
+from app.main import _PUBLISH_TIMEOUT_SECONDS, _run_parallel_uploads, app
 
 client = TestClient(app)
+
+
+def test_publish_budget_exceeds_every_publisher_request_timeout():
+    """A budget below a publisher's own request timeout would abort a live request.
+
+    Regression: the budget was 300s while youtube/tiktok/meta upload the video body
+    with timeout=600, so those uploads were guaranteed to be cut off and reported as
+    a false "unknown" outcome.
+    """
+    publishers = Path(__file__).resolve().parent.parent / "app" / "publishers"
+    worst = 0
+    for path in publishers.glob("*.py"):
+        if "browser" in path.name:
+            # tiktok_browser is host-only (not in the publish fan-out) and its
+            # timeout= values are Playwright DOM waits in milliseconds.
+            continue
+        for raw in re.findall(r"timeout=(\d+)", path.read_text(encoding="utf-8")):
+            worst = max(worst, int(raw))
+
+    assert worst > 0, "publisher timeouts not detected; the guard would be vacuous"
+    assert _PUBLISH_TIMEOUT_SECONDS > worst, (
+        f"publish budget {_PUBLISH_TIMEOUT_SECONDS}s must exceed the largest "
+        f"publisher request timeout {worst}s"
+    )
 
 
 def test_run_parallel_uploads_timeout_is_unknown_not_error():

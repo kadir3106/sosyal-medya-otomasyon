@@ -48,8 +48,11 @@ from app.telegram_bot import run_poller, send_pitches_message
 from app.topics import release_topic, select_next_topic
 from app.trends import fetch_trends
 
-# Per-platform upload timeout (seconds) for parallel fan-out.
-_PUBLISH_TIMEOUT_SECONDS = 300
+# Per-platform upload budget for the parallel fan-out. Must stay ABOVE the largest
+# single-request timeout any publisher uses, or the budget cuts a request that was
+# still inside its own limit and reports a false "unknown". youtube/tiktok/meta
+# upload the video body with timeout=600, so 600 + 60s of slack for the other calls.
+_PUBLISH_TIMEOUT_SECONDS = 660
 _PUBLISH_WORKERS = 4
 
 
