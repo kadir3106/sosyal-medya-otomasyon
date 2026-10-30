@@ -677,14 +677,24 @@ Faz 0'ın P0 çekirdeği uygulandı ve doğrulandı.
 | 5 | `app.pipeline.refine_script` stub'landı | `video-worker/tests/conftest.py` | Wikipedia + LLM editör çağrıları ve askı bitti |
 | 6 | `live` / `live_smoke` markları kaydedildi | `video-worker/pytest.ini` | Canlı testler ayrıştırılabilir, uyarılar temizlendi |
 | 7 | Bayat testler düzeltildi | `tests/test_main.py`, `tests/test_ai_visuals.py`, `tests/test_documentary_v2_stage_d1.py`, `tests/test_phase_a_quality.py` | `/health` kesin-eşitlik, gerçek Fal 403, gerçek DNS (`example.invalid`), eksik `voice_settings` kwarg'ı |
+| 8 | İkinci `/publish` artık reddediliyor | `video-worker/app/jobs.py`, `app/main.py`, `app/errors.py`, `app/telegram_bot.py` | Çift tıklama / n8n retry / Telegram double-callback aynı videoyu **iki kez public yayınlayamıyor** (409) |
+| 9 | Sayaç koleksiyonu tam paket doğrulaması | — | 608 → **613 passed** (5 yeni idempotency testi) |
 
 ### Ölçülen sonuç
 
 | Metrik | Önce | Sonra |
 |---|---|---|
-| Tam paket | **tamamlanamıyordu** (4 dosya askıda) | **608 passed, 3 skipped, 0 failed** |
-| Süre | belirsiz (askı) | **119 sn** |
+| Tam paket | **tamamlanamıyordu** (4 dosya askıda) | **613 passed, 3 skipped, 0 failed** |
+| Süre | belirsiz (askı) | **96 sn** |
 | Başarısız test | 5 | **0** |
+
+### Yayın idempotency detayı (madde 8)
+
+`claim_for_publish()` tek bir `UPDATE jobs SET state='publishing' WHERE id=? AND state NOT IN ('publishing','done')` çalıştırır ve `rowcount` üzerinden yarışı kazanıp kazanmadığını söyler. Bu, "oku-sonra-yaz" yarışını kapatır: iki eşzamanlı `/publish` çağrısından yalnızca biri yükleme yapar, diğeri `409` alır. Korunan davranışlar:
+
+- `failed` durumu **claim edilebilir kalır** → Telegram "Tekrar dene" butonu çalışmaya devam eder
+- Job satırı **hiç yoksa** yayın geçer → image/legacy akışları job oluşturmaz, bunları reddetmek yayıncıyı kırardı
+- Telegram botu `AlreadyPublishedError`'ı yakalayıp kullanıcıya "atlandı" mesajı gösterir; bu hata `AllPlatformsFailedError` değildir, retry payload yazmaz
 
 ### Kök neden notu
 
@@ -696,9 +706,9 @@ Askı sanılan şey aslında **gerçek ağ retry'ı**ydı: `.env` içindeki `DIR
 - Lint (bilinçli olarak atlandı: kod tabanında lint baseline yok, varsayılan ruff/flake8 ilk koşuda kırmızı olur ve CI'ı görmezden gelmeye alıştırır)
 - Playwright kararı → **verildi**: CI'a eklenmedi, host-only kaldı (hiçbir test `tiktok_browser`'ı import etmiyor)
 - `pytest-timeout` ile per-test timeout (yeni bağımlılık gerektiriyor)
-- Push (3 commit lokal `cursor/hybrid-flux-architecture` dalında)
+- Push (4 commit lokal `cursor/hybrid-flux-architecture` dalında)
 - `video-worker/video-output/*` üretilmiş artefaktları ve `_tmp_*` scratch dizinleri (bilinçli olarak commit edilmedi)
-- Faz 1+ (ContentJob, state machine, idempotent yayın, kalite kapıları)
+- Faz 1'in geri kalanı (ContentJob artefakt manifesti, hash'e bağlı onay, publication durum sorgulama, kalite kapıları)
 
 ### Commit geçmişi
 
@@ -707,6 +717,8 @@ Askı sanılan şey aslında **gerçek ağ retry'ı**ydı: `.env` içindeki `DIR
 | `4291c74` | Sessiz video regresyonu, hermetic test paketi, otonom yayın kilidi (9 dosya) |
 | `6fbee82` | İzlenmeyen video-worker kaynak ağacı — HEAD artık import edilebilir (107 dosya, bana ait değil) |
 | `7e3d1cd` | CI workflow (`.github/workflows/ci.yml`) |
+| `69effc9` | Bu belgeye uygulama durumu |
+| `7200d5f` | Yayın idempotency: `claim_for_publish` + 409 (6 dosya) |
 
 > Bu belgeyi güncelleyen commit ayrıca `docs:` önekiyle geçmişte bulunabilir (kendi hash'ini içeremez).
 
