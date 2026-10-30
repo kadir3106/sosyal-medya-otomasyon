@@ -2,6 +2,8 @@ import json
 import logging
 from pathlib import Path
 
+from app.jsonstore import locked_json
+
 logger = logging.getLogger(__name__)
 
 # EN daily niche lock — never silently serve trivia pools (space/ants/etc.).
@@ -37,26 +39,18 @@ def resolve_en_topics_path(topics_path: str) -> str:
 def select_next_topic(topics_path: str, state_path: str) -> str:
     topics = json.loads(Path(topics_path).read_text(encoding="utf-8"))
 
-    state_file = Path(state_path)
-    if state_file.exists():
-        state = json.loads(state_file.read_text(encoding="utf-8"))
+    # Kilit şart: eşzamanlı çağrılar aksi hâlde aynı konuyu tekrar tekrar dağıtıyor
+    # ve state dosyasını bozuyordu (ölçüm: 40 çağrıda 3 farklı konu, 30 tekrar).
+    with locked_json(Path(state_path), {"used_topics": []}) as state:
         used = state.get("used_topics", [])
-    else:
-        used = []
+        remaining = [t for t in topics if t not in used]
+        if not remaining:
+            used = []
+            remaining = topics
 
-    remaining = [t for t in topics if t not in used]
-    if not remaining:
-        used = []
-        remaining = topics
-
-    next_topic = remaining[0]
-    used.append(next_topic)
-
-    state_file.parent.mkdir(parents=True, exist_ok=True)
-    state_file.write_text(
-        json.dumps({"used_topics": used}, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+        next_topic = remaining[0]
+        used.append(next_topic)
+        state["used_topics"] = used
 
     return next_topic
 
@@ -67,13 +61,9 @@ def release_topic(topic: str, state_path: str) -> None:
     if not state_file.exists():
         return
 
-    state = json.loads(state_file.read_text(encoding="utf-8"))
-    used = state.get("used_topics", [])
-    if topic not in used:
-        return
-
-    used.remove(topic)
-    state_file.write_text(
-        json.dumps({"used_topics": used}, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    with locked_json(state_file, {"used_topics": []}) as state:
+        used = state.get("used_topics", [])
+        if topic not in used:
+            return
+        used.remove(topic)
+        state["used_topics"] = used

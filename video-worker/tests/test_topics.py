@@ -85,3 +85,41 @@ def test_resolve_en_topics_path_remaps_trivia_topics_json():
     )
     remapped = resolve_en_topics_path("/data/topics_trivia.json")
     assert remapped.endswith("topics_dark_wealth.json")
+
+
+def test_concurrent_select_does_not_duplicate_topics(tmp_path):
+    """Regression: unlocked read-modify-write handed out the same topic repeatedly.
+
+    Measured before the fix: 40 concurrent calls returned only 3 distinct topics
+    (30 duplicates) and 7 calls crashed with JSONDecodeError on the state file.
+    Duplicated topics mean duplicated content, which YouTube flags as inauthentic.
+    """
+    import threading
+
+    topics_path = tmp_path / "topics.json"
+    state_path = tmp_path / "used_topics.json"
+    topics = [f"topic-{i:03d}" for i in range(40)]
+    topics_path.write_text(json.dumps(topics), encoding="utf-8")
+
+    picked: list[str] = []
+    guard = threading.Lock()
+
+    def worker():
+        t = select_next_topic(str(topics_path), str(state_path))
+        with guard:
+            picked.append(t)
+
+    threads = [threading.Thread(target=worker) for _ in range(40)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len(picked) == 40
+    assert len(set(picked)) == 40, (
+        f"duplicate topics handed out: {len(picked) - len(set(picked))}"
+    )
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert sorted(state["used_topics"]) == sorted(topics)
+
