@@ -6,7 +6,12 @@ from typing import Callable
 import requests
 
 from app import jobs as job_store
-from app.errors import AllPlatformsFailedError, AlreadyPublishedError, ArtifactChangedError
+from app.errors import (
+    AllPlatformsFailedError,
+    AlreadyPublishedError,
+    ArtifactChangedError,
+    PublishOutcomeUnknownError,
+)
 
 API_URL = "https://api.telegram.org/bot{token}/{method}"
 POLL_TIMEOUT_SECONDS = 25
@@ -287,6 +292,18 @@ def _publish_and_report(
             f'⚠️ "{title}" — onaylanan dosya artık geçerli değil ({exc.reason}). '
             "Yayın yapılmadı; videoyu yeniden üretip onaylayın.",
         )
+        return
+    except PublishOutcomeUnknownError as exc:
+        # Retry butonu YOK: thread hâlâ çalışıyor olabilir ve video yayınlanmış olabilir.
+        lines = [
+            f'⚠️ "{title}" — yükleme zaman aşımına uğradı, sonuç BİLİNMİYOR.',
+            "",
+            "Platformu kontrol edin. Video yayındaysa tekrar denemeyin.",
+        ]
+        for r in exc.results:
+            if r["status"] == "unknown":
+                lines.append(f"  ❓ {r['platform']}: sonuç bilinmiyor")
+        send_message(token, chat_id, "\n".join(lines))
         return
     except AllPlatformsFailedError as exc:
         lines = [f'❌ "{title}" — tüm platformlar başarısız.']

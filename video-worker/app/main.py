@@ -11,6 +11,7 @@ import contextlib
 import json
 import shutil
 from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,7 +24,12 @@ from app.analytics import build_weekly_report
 from app.catchup import mark_run_today, maybe_catch_up
 from app.config import config
 from app.daily_digest import run_digest_loop
-from app.errors import AllPlatformsFailedError, AlreadyPublishedError, ArtifactChangedError
+from app.errors import (
+    AllPlatformsFailedError,
+    AlreadyPublishedError,
+    ArtifactChangedError,
+    PublishOutcomeUnknownError,
+)
 from app.image_gen import generate_image_content, render_card
 from app import jobs as job_store
 from app.joblog import log_event
@@ -393,7 +399,12 @@ def _run_upload_task(name: str, fn, *args, **kwargs) -> dict:
 
 
 def _run_parallel_uploads(tasks: list[tuple[str, object, tuple, dict]]) -> list[dict]:
-    """Fan-out platform uploads with per-task timeouts. tasks: (platform, fn, args, kwargs)."""
+    """Fan-out platform uploads with per-task timeouts. tasks: (platform, fn, args, kwargs).
+
+    A timeout is NOT a failure: the worker thread keeps running and may still have
+    published. It is reported as status="unknown" so the caller never offers a blind
+    retry that would post the same video twice.
+    """
     if not tasks:
         return []
     by_name: dict[str, dict] = {}
@@ -405,6 +416,15 @@ def _run_parallel_uploads(tasks: list[tuple[str, object, tuple, dict]]) -> list[
         for fut, name in futures.items():
             try:
                 by_name[name] = fut.result(timeout=_PUBLISH_TIMEOUT_SECONDS)
+            except FutureTimeoutError:
+                by_name[name] = {
+                    "platform": name,
+                    "status": "unknown",
+                    "error": (
+                        f"upload did not finish within {_PUBLISH_TIMEOUT_SECONDS}s; "
+                        "outcome unknown — check the platform before retrying"
+                    ),
+                }
             except Exception as exc:
                 by_name[name] = {"platform": name, "status": "error", "error": str(exc)}
     return [
@@ -614,6 +634,16 @@ def _run_publish(payload: dict) -> dict:
     append_publish_log(str(media_dir / "published_log.json"), entry)
 
     any_success = any(r["status"] == "success" for r in results)
+    any_unknown = any(r["status"] == "unknown" for r in results)
+
+    if any_unknown:
+        # Yükleme zaman aşımına uğradı ama thread çalışmaya devam etti: platformda
+        # yayınlanmış OLABİLİR. Körlemesine retry sunmak aynı videoyu iki kez yayınlar,
+        # bu yüzden retry sidecar yazmıyor ve dosyayı silmiyoruz.
+        log_event(job_id, "publish_outcome_unknown", total=len(results))
+        job_store.mark_failed(media_dir, job_id, "publish_outcome_unknown")
+        job_store.clear_pending_mirror(media_dir, job_id)
+        raise PublishOutcomeUnknownError(job_id, results)
 
     if any_success:
         Path(cleanup_path).unlink(missing_ok=True)
@@ -679,6 +709,8 @@ def publish(payload: PublishRequest):
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ArtifactChangedError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except PublishOutcomeUnknownError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     except AllPlatformsFailedError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 

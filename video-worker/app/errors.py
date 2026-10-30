@@ -25,6 +25,19 @@ class ArtifactChangedError(Exception):
         self.reason = reason
 
 
+class PublishOutcomeUnknownError(Exception):
+    """Yükleme zaman aşımına uğradı; platformda yayınlanmış olabilir.
+
+    Bilinçli olarak AllPlatformsFailedError'dan ayrı: bu durumda retry sunmak
+    aynı videoyu iki kez yayınlar, o yüzden çağıranlar retry önermemeli.
+    """
+
+    def __init__(self, job_id: str, results: list[dict]):
+        super().__init__(f"Publish outcome unknown for job {job_id}")
+        self.job_id = job_id
+        self.results = results
+
+
 class FalAuthBillingError(Exception):
     """Fal.ai (Flux/Kling) 401/403 veya bakiye/yetki hatası — stok fallback yasak, job hard-fail."""
 
