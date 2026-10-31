@@ -14,7 +14,6 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -36,7 +35,7 @@ from app import jobs as job_store
 from app.joblog import log_event
 from app.pitch_gen import generate_pitches
 from app.pipeline import generate_video, _generate_video_sync
-from app.publish_log import append_publish_log
+from app.publish_log import append_publish_log, build_publish_entry
 from app.publishers.linkedin import upload_to_linkedin
 from app.publishers.meta import upload_to_facebook, upload_to_instagram
 from app.publishers.pinterest import upload_to_pinterest
@@ -673,12 +672,13 @@ def _publish_claimed(payload: dict, kind: str, job_id: str, media_dir: Path) -> 
             platform=r["platform"], status=r["status"], error=r.get("error"),
         )
 
-    entry = {
-        "published_at": datetime.now(timezone.utc).isoformat(),
-        "title": entry_title,
-        "kind": kind,
-        "platforms": {r["platform"]: r for r in results},
-    }
+    entry = build_publish_entry(
+        job_id=job_id,
+        title=entry_title,
+        kind=kind,
+        results=results,
+        approved_sha256=payload.get("video_sha256", "") or "",
+    )
     append_publish_log(str(media_dir / "published_log.json"), entry)
 
     any_success = any(r["status"] == "success" for r in results)

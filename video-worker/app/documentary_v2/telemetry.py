@@ -18,7 +18,7 @@ def write_production_manifest(
 ) -> Path:
     media = Path(media_dir)
     media.mkdir(parents=True, exist_ok=True)
-    path = media / f"DOCUMENTARY_ENGINE_V2_MANIFEST_{manifest.job_id}.json"
+    path = manifest_path(media, manifest.job_id)
     payload = manifest.to_dict()
     leaks = ProductionManifest.assert_no_secrets(payload)
     if leaks:
@@ -51,6 +51,34 @@ def _redact(obj: Any, dotted: str) -> None:
             return
         if cur is None:
             return
+
+
+def manifest_path(media_dir: str | Path, job_id: str) -> Path:
+    """Üretim manifestinin yolu — yayın kaydıyla birleştirme anahtarı.
+
+    `telemetry.write_production_manifest` ile aynı adlandırmayı kullanmak
+    zorunda; ikisi ayrışırsa zincir sessizce kopar (ölçüm: yayın kaydında
+    `job_id` yoktu, manifest okuyan tüketici 0'du).
+    """
+    return Path(media_dir) / f"DOCUMENTARY_ENGINE_V2_MANIFEST_{job_id}.json"
+
+
+def read_production_manifest(
+    media_dir: str | Path, job_id: str
+) -> dict[str, Any] | None:
+    """Manifest'i okur; yoksa/bozuksa None.
+
+    Manifest yalnızca konfigürasyon değil, üretimin *izini* taşıyor (hangi
+    kaynak, hangi model, hangi kalite sonucu). Bu yüzden eksik manifest bir
+    hata değil, "iz yok" bilgisidir — yayını bloklamaz.
+    """
+    path = manifest_path(media_dir, job_id)
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
 
 
 def emit_legacy_job_manifest(

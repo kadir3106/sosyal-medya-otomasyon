@@ -17,7 +17,10 @@ def build_weekly_report(log_path: str, youtube_creds: dict, meta_creds: dict) ->
 
     lines = [f"📊 Haftalık Rapor ({len(entries)} video)\n"]
     for entry in entries:
+        # job_id, üretim kaydıyla tek birleştirme anahtarı (bkz. app/provenance.py).
+        job_id = entry.get("job_id") or "—"
         lines.append(f"🎬 {entry['title']}")
+        lines.append(f"  İş: {job_id}")
         platforms = entry.get("platforms", {})
 
         youtube = platforms.get("youtube")
