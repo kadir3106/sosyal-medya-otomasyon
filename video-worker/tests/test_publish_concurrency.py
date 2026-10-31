@@ -7,15 +7,14 @@ iki kez kamuya açık yayınlıyordu. Ölçüm: 2 başarılı yayın, 8 yükleme
 
 Artık satır koşullu INSERT ile talep ediliyor ve birincil anahtar hakem.
 """
-import tempfile
 import threading
 import time
 from pathlib import Path
 
+import pytest
+
 from app import jobs as job_store
 from app import main as main_mod
-
-MEDIA = Path(tempfile.mkdtemp(prefix="publish-race-"))
 
 
 def _payload(video):
@@ -159,3 +158,56 @@ def test_crashed_publish_does_not_lock_generate_forever(tmp_path, monkeypatch):
     # 'publishing' kalsaydı has_blocking_job True döner ve /generate 409 verirdi.
     assert row["state"] == "failed", row["state"]
     assert job_store.has_blocking_job(tmp_path) is False
+
+
+def test_unlink_quietly_tolerates_concurrent_delete(tmp_path):
+    """Eşzamanlı silmede kaybeden thread Windows'ta PermissionError alıyordu.
+
+    `unlink(missing_ok=True)` yalnızca FileNotFoundError'ı yutuyor. _run_cleanup
+    üzerinden ölçmek yarışı seyreltiyordu (düzeltme geri alındığında bile test
+    geçiyordu), o yüzden asıl birim doğrudan sıkıştırılıyor.
+
+    Ölçüm (düzeltme geri alınmış halde, 20 deneme): 2 thread'de 8, 4 thread'de 11,
+    8 thread'de 20 denemede hata. Düzeltmeyle üç durumda da 0.
+    """
+    hits = 0
+    for _ in range(10):
+        target = tmp_path / "x.mp4"
+        target.write_bytes(b"x")
+        errors = []
+        lock = threading.Lock()
+        barrier = threading.Barrier(8)
+
+        def worker():
+            try:
+                barrier.wait(timeout=5)
+                main_mod._unlink_quietly(target)
+            except Exception as exc:  # noqa: BLE001 - hangi hata çıktığını istiyoruz
+                with lock:
+                    errors.append(f"{type(exc).__name__}: {exc}")
+
+        threads = [threading.Thread(target=worker) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not target.exists()
+        if errors:
+            hits += 1
+
+    assert hits == 0, f"{hits}/10 denemede eşzamanlı silme hata verdi"
+
+
+def test_unlink_quietly_still_raises_when_delete_really_fails(tmp_path, monkeypatch):
+    """Hata körlemesine yutulmamalı: dosya gerçekten kilitliyse çağıran duymalı."""
+    target = tmp_path / "locked.mp4"
+    target.write_bytes(b"x")
+
+    def fake_unlink(self, missing_ok=False):
+        raise PermissionError("file is locked by another process")
+
+    monkeypatch.setattr(Path, "unlink", fake_unlink)
+
+    with pytest.raises(PermissionError):
+        main_mod._unlink_quietly(target, attempts=2)
