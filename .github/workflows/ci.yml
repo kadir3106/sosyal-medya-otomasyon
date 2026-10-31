@@ -36,7 +36,7 @@ jobs:
 
       # No .env is present here, which is the point: tests/conftest.py keeps the suite
       # hermetic (legacy pipeline mode, stubbed refine_script, external network blocked,
-      # retries disabled). Verified 732 passed, 3 skipped in ~83 s on this runner.
+      # retries disabled). Verified 750 passed, 3 skipped in ~1 m 46 s on this runner.
       - name: Run tests
         run: pytest tests -q
 

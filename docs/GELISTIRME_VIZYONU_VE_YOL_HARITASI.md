@@ -859,7 +859,7 @@ Askı sanılan şey aslında **gerçek ağ retry'ı**ydı: `.env` içindeki `DIR
 - CI'ın kalan 2 kontrolü: `docker build` (Docker daemon bu ortamda çalışmıyor → yerelde doğrulanamadı, bu yüzden eklenmedi) ve `ruff` (lint baseline yok)
 - Playwright kararı → **verildi**: CI'a eklenmedi, host-only kaldı (hiçbir test `tiktok_browser`'ı import etmiyor)
 - `pytest-timeout` ile per-test timeout (yeni bağımlılık gerektiriyor)
-- Push (41 commit lokal `cursor/hybrid-flux-architecture` dalında)
+- ~~Push (41 commit lokal `cursor/hybrid-flux-architecture` dalında)~~ → **yapıldı** (2026-10-31): dallar `origin/cursor/hybrid-flux-architecture` üzerinde, CI her push'ta koşuyor (madde 25 ve 26.1)
 - `video-worker/video-output/*` üretilmiş artefaktları ve `_tmp_*` scratch dizinleri (bilinçli olarak commit edilmedi)
 - Faz 1'in geri kalanı (ortak job state machine, ayarlanabilir artefakt manifesti versiyonlama)
 - Teknik kalite kapısının kalan boyutları: altyazı zamanlaması/satır kuralları, clipping, ani seviye sıçraması, `loudnorm` hedefi doğrulaması (şu an süre + ses akışı + ortalama seviye kontrol ediliyor)
