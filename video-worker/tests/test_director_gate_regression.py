@@ -42,11 +42,14 @@ def test_bakery_cookie_metadata_must_reject_for_wilsdorf_scene():
     assert gate.accepted is False
     assert gate.reason == "forbidden_concept"
     assert gate.forbidden_hit is not None
-    foodish = {
-        "bakery", "baker", "cookie", "cookies", "cake", "pastry", "pastries",
-        "dessert", "food", "icing", "frosting", "dough", "cooking", "restaurant",
-    }
-    assert gate.forbidden_hit in foodish
+    # Hangi kavramın ilk eşleştiği DEFAULT_FORBIDDEN_CONCEPTS'in (frozenset)
+    # iterasyon sırasına bağlı, o da PYTHONHASHSEED'e. Bu test bir kez bu yüzden
+    # dalgalı kırıldı: elle yazılmış bir "foodish" whitelist'i setin tamamını
+    # kapsamıyordu (cook, foods, burger, sushi...). Sözleşme şu: eşleşen kavram
+    # gerçekten yasaklı sette olmalı — whitelist'e değil, kaynağa bakıyoruz.
+    from app.director_gate import DEFAULT_FORBIDDEN_CONCEPTS
+
+    assert gate.forbidden_hit in DEFAULT_FORBIDDEN_CONCEPTS
 
 
 def test_cooking_food_url_slug_must_reject():
