@@ -687,12 +687,14 @@ Faz 0'ın P0 çekirdeği uygulandı ve doğrulandı.
 | 15 | Konu seçimi kilitlendi; desen paylaşılan `jsonstore`'a çıkarıldı | `app/jsonstore.py` (yeni), `app/topics.py`, `app/publish_log.py` | Eşzamanlı seçim **aynı konuyu tekrar dağıtmıyor** (ölçüm: 40 çağrıda 3 farklı konu, **30 tekrar**) |
 | 16 | `/generate` guard'ı + iş kaydı tek atomik adım; `job_id` benzersiz | `app/jobs.py`, `app/main.py`, `app/pipeline.py` | İki eşzamanlı istek **tek üretim** başlatıyor (ölçüm: `[200,200]`/2 çağrı → `[200,409]`/1 çağrı) |
 | 17 | `/publish`'in bilinmeyen-iş dalı atomik yapıldı (koşullu INSERT) | `app/jobs.py`, `app/main.py`, `tests/test_publish_concurrency.py` (yeni) | Legacy/görsel iş **iki kez kamuya açık yayınlanamıyor** (ölçüm: 2 yayın/8 yükleme → 1 yayın/4 yükleme) |
+| 18 | Eşzamanlı silmede geçici `WinError 5` yeniden deneniyor | `app/main.py`, `tests/test_publish_concurrency.py` | Paralel `/cleanup` **500 dönmüyor** (ölçüm: 8 thread'de 20/20 → 0/20) |
+| 19 | Kapı testi `frozenset` sırasına bağımlı olmaktan çıkarıldı | `tests/test_director_gate_regression.py` | Test **hash seed'e göre dalgalanmıyor** (ölçüm: 6 farklı sıralama → 30 seed'de 0 hata) |
 
 ### Ölçülen sonuç
 
 | Metrik | Önce | Sonra |
 |---|---|---|
-| Tam paket | **tamamlanamıyordu** (4 dosya askıda) | **644 passed, 3 skipped, 0 failed** |
+| Tam paket | **tamamlanamıyordu** (4 dosya askıda) | **646 passed, 3 skipped, 0 failed** |
 | Süre | belirsiz (askı) | **110 sn** |
 | Başarısız test | 5 | **0** |
 
@@ -860,7 +862,23 @@ Askı sanılan şey aslında **gerçek ağ retry'ı**ydı: `.env` içindeki `DIR
 - `jobs.py` `write_pending_mirror` hâlâ düz `write_text` ile yazıyor (atomik değil); okuma tarafı artık SQLite'ı tercih ettiği için pratikte yarım dosya okunmuyor ama dosya düzeyinde garanti yok
 - `claim_new_job` içindeki `pending.json` kontrolü atomik INSERT'in **dışında** — DB tarafı atomik, dosya tarafı değil (legacy akış yalnızca kendi yazarıyla yarışabilir)
 - `claim_for_publish`'in "satır yok" dalı artık atomik, ama `_verify_approved_artifact` (hash doğrulaması) ile claim arasında dosya değişebilir: hash kontrolü kendi başına atomik değil, yalnızca TOCTOU penceresini daraltıyor
-- `/cleanup` için yarış ölçülmedi (idempotent `unlink(missing_ok=True)`; çift çağrı zararsız görünüyor ama doğrulanmadı)
+- `/cleanup` için yarış ölçüldü ve düzeltildi; ama `_run_cleanup`'ın `pending.json` üzerinden `mark_done` çağırması ile eşzamanlı bir `/publish` hâlâ teorik olarak yarışabilir (ikisi de farklı kilitler kullanıyor)
+
+### Eşzamanlı silme (madde 18)
+
+İki istek aynı artefaktı silmeye çalışınca Windows'ta kaybeden taraf `PermissionError` (`WinError 5`) alıyor — kazanan hâlâ dosya tutamacını bırakmamış oluyor. `unlink(missing_ok=True)` yalnızca `FileNotFoundError`'ı yutuyor, dolayısıyla paralel `/cleanup` çağrılarından biri **500** dönüyordu. Dosya kaybı yoktu (zaten siliniyordu), ama çağıran gerçek bir arıza görüyordu.
+
+Ölçüm (8 thread, 20 deneme): `20/20` hata. Hata sonrası `path.exists()` kontrolü **yetmiyor** — aynı şekilde yarışıyor ve 10 denemede 1 kez hâlâ patlıyordu. Çözüm: 10 ms'den başlayıp ikiye katlanan, en fazla 5 denemelik kısa retry. Kazanan mikrosaniyeler içinde bitiyor, retry `FileNotFoundError` görüyor. Gerçekten kilitli dosya son denemede yine hata veriyor (test bunu da kapsıyor).
+
+Aynı desen `_run_publish`'in başarı-sonrası temizliğinde de vardı; tek yardımcıya (`_unlink_quietly`) çıkarılıp ikisi de ona bağlandı.
+
+### Dalgalı kapı testi (madde 19)
+
+`test_bakery_cookie_metadata_must_reject_for_wilsdorf_scene`, `gate.forbidden_hit`'in elle yazılmış bir "foodish" whitelist'inde olduğunu doğruluyordu. `DEFAULT_FORBIDDEN_CONCEPTS` bir **frozenset**: hangi kavramın ilk eşleştiği `PYTHONHASHSEED`'e bağlı. Ölçüm: 6 farklı seed → 6 farklı ilk-5 sıralama. Whitelist setin tamamını kapsamıyordu (`cook`, `foods`, `burger`, `sushi`...), bu yüzden test ~12 koşuda 1 kez kırılıyordu.
+
+Bu bir **test kırılganlığıydı, üretim hatası değil**: kapı her durumda reddediyordu (`accepted=False`, `reason="forbidden_concept"`). İddia artık gerçek sözleşmeye bakıyor — eşleşen kavram gerçekten yasaklı setin elemanı mı. 30 farklı seed'de 0 hata.
+
+> Bu hata ilk kez tam pakette, `/publish` değişiklikleriyle aynı koşuda göründü. Değişiklikler `git stash`'lenip paket yeniden koşturularak benim neden olmadığım doğrulandı (644 passed), sonra izole koşuda 12 denemede 1 kez üreyerek kaynağı bulundu.
 
 ### Commit geçmişi
 
@@ -880,6 +898,9 @@ Askı sanılan şey aslında **gerçek ağ retry'ı**ydı: `.env` içindeki `DIR
 | `7edd883` | Konu seçimi kilidi + paylaşılan `jsonstore` (5 dosya) |
 | `417863f` | `/generate` guard'ı atomik; ikinci eşzamanlı üretim engellendi (5 dosya) |
 | `ce6b93e` | `/publish` bilinmeyen-iş dalı atomik (koşullu INSERT) + çökmede `failed` (3 dosya) |
+| `de4c4d7` | Eşzamanlı silmede geçici `WinError 5` retry'ı (1 dosya) |
+| `77f1c51` | Unlink retry + çökme bırakma testleri (1 dosya) |
+| `3181eb7` | Kapı testi `frozenset` sırasına bağımlı olmaktan çıkarıldı (1 dosya) |
 
 > Bu belgeyi güncelleyen commit ayrıca `docs:` önekiyle geçmişte bulunabilir (kendi hash'ini içeremez).
 
