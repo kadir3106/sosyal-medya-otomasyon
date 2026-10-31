@@ -32,8 +32,6 @@ def _install_fakes(monkeypatch, uploads, lock):
     Koşullu platformlar (threads/x/pinterest) da sahteleniyor: `.env`'de kimlik
     varsa gerçek yayıncı çağrılır ve test ağa çıkardı (ölçüldü: api.x.com 400).
     """
-    called = []
-
     def make(platform):
         def fake(*args, **kwargs):
             with lock:
@@ -53,8 +51,6 @@ def _install_fakes(monkeypatch, uploads, lock):
         ("upload_to_pinterest", "pinterest"),
     ):
         monkeypatch.setattr(main_mod, name, make(platform), raising=False)
-        called.append(name)
-    assert len(called) == 7
 
 
 def _race(payload, n=2):
