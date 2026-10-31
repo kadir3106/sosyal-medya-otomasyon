@@ -686,12 +686,13 @@ Faz 0'ın P0 çekirdeği uygulandı ve doğrulandı.
 | 14 | `append_publish_log` kilitlendi + atomik yazıyor | `app/publish_log.py` | Eşzamanlı yayın kayıtları kaybolmuyor (ölçüm: 40 kayıttan **35'i kayıptı**) |
 | 15 | Konu seçimi kilitlendi; desen paylaşılan `jsonstore`'a çıkarıldı | `app/jsonstore.py` (yeni), `app/topics.py`, `app/publish_log.py` | Eşzamanlı seçim **aynı konuyu tekrar dağıtmıyor** (ölçüm: 40 çağrıda 3 farklı konu, **30 tekrar**) |
 | 16 | `/generate` guard'ı + iş kaydı tek atomik adım; `job_id` benzersiz | `app/jobs.py`, `app/main.py`, `app/pipeline.py` | İki eşzamanlı istek **tek üretim** başlatıyor (ölçüm: `[200,200]`/2 çağrı → `[200,409]`/1 çağrı) |
+| 17 | `/publish`'in bilinmeyen-iş dalı atomik yapıldı (koşullu INSERT) | `app/jobs.py`, `app/main.py`, `tests/test_publish_concurrency.py` (yeni) | Legacy/görsel iş **iki kez kamuya açık yayınlanamıyor** (ölçüm: 2 yayın/8 yükleme → 1 yayın/4 yükleme) |
 
 ### Ölçülen sonuç
 
 | Metrik | Önce | Sonra |
 |---|---|---|
-| Tam paket | **tamamlanamıyordu** (4 dosya askıda) | **640 passed, 3 skipped, 0 failed** |
+| Tam paket | **tamamlanamıyordu** (4 dosya askıda) | **644 passed, 3 skipped, 0 failed** |
 | Süre | belirsiz (askı) | **110 sn** |
 | Başarısız test | 5 | **0** |
 
@@ -829,6 +830,18 @@ Test sırasında iki hata yakalandı: **(1)** `PublishRequest` `video_sha256` al
 - Job satırı **hiç yoksa** yayın geçer → image/legacy akışları job oluşturmaz, bunları reddetmek yayıncıyı kırardı
 - Telegram botu `AlreadyPublishedError`'ı yakalayıp kullanıcıya "atlandı" mesajı gösterir; bu hata `AllPlatformsFailedError` değildir, retry payload yazmaz
 
+**Madde 17 — "satır yoksa geç" dalı atomik değildi.** Yukarıdaki `UPDATE` yalnızca *var olan* satırı koruyordu; satır yoksa karar `SELECT` + `return known is None` ile veriliyordu — yani denetle-ve-yaz. `/publish` senkron `def` olduğu için FastAPI onu threadpool'da çalıştırır, iki istek **gerçekten paralel** koşar. Ölçüm (2 eşzamanlı `/publish`, DB satırı yok):
+
+| | Önce | Sonra |
+|---|---|---|
+| Başarılı yayın | **2** | **1** |
+| Platform yüklemesi | **8** (4×2) | **4** |
+| İkinci istek | `ok` | `AlreadyPublishedError` → 409 |
+
+Düzeltme: bilinmeyen iş, `UPDATE`'in zaten açtığı yazma kilidi içinde **koşullu bir INSERT** ile talep edilir; birincil anahtar hakemdir, kaybeden `IntegrityError` alır. `kind` yalnızca oluşturulan satırı etiketler.
+
+Yan etki kapatıldı: satır artık *oluştuğu* için beklenmeyen bir çökme onu `publishing`'de bırakıp `/generate`'i **sonsuza dek 409**'a kilitleyebilirdi. `_run_publish`, kendi işlemediği her istisnada claim'i `failed`'a bırakır (`failed` claim edilebilir → retry hâlâ çalışır).
+
 ### Kök neden notu
 
 Askı sanılan şey aslında **gerçek ağ retry'ı**ydı: `.env` içindeki `DIRECTOR_ENABLED=true` yüzünden legacy stock yolu mock'lanan testler Director yolunu gerçekten çalıştırıyordu (`api.pexels.com` 429 backoff + LLM 401). Bir testte `scene_plan` → `director_clips_ready` arası 31 sn sürüyordu. Aynı bayrak birçok test dosyasında elle `delenv` ediliyordu; conftest bunu bir kez yapıyor.
@@ -846,6 +859,8 @@ Askı sanılan şey aslında **gerçek ağ retry'ı**ydı: `.env` içindeki `DIR
 - `jsonstore` kilidi yalnızca **süreç-içi**; birden çok video-worker replikası çalışırsa dosya düzeyinde kilit gerekir
 - `jobs.py` `write_pending_mirror` hâlâ düz `write_text` ile yazıyor (atomik değil); okuma tarafı artık SQLite'ı tercih ettiği için pratikte yarım dosya okunmuyor ama dosya düzeyinde garanti yok
 - `claim_new_job` içindeki `pending.json` kontrolü atomik INSERT'in **dışında** — DB tarafı atomik, dosya tarafı değil (legacy akış yalnızca kendi yazarıyla yarışabilir)
+- `claim_for_publish`'in "satır yok" dalı artık atomik, ama `_verify_approved_artifact` (hash doğrulaması) ile claim arasında dosya değişebilir: hash kontrolü kendi başına atomik değil, yalnızca TOCTOU penceresini daraltıyor
+- `/cleanup` için yarış ölçülmedi (idempotent `unlink(missing_ok=True)`; çift çağrı zararsız görünüyor ama doğrulanmadı)
 
 ### Commit geçmişi
 
@@ -864,6 +879,7 @@ Askı sanılan şey aslında **gerçek ağ retry'ı**ydı: `.env` içindeki `DIR
 | `52a0f85` | `append_publish_log` kilit + atomik yazma (2 dosya) |
 | `7edd883` | Konu seçimi kilidi + paylaşılan `jsonstore` (5 dosya) |
 | `417863f` | `/generate` guard'ı atomik; ikinci eşzamanlı üretim engellendi (5 dosya) |
+| `ce6b93e` | `/publish` bilinmeyen-iş dalı atomik (koşullu INSERT) + çökmede `failed` (3 dosya) |
 
 > Bu belgeyi güncelleyen commit ayrıca `docs:` önekiyle geçmişte bulunabilir (kendi hash'ini içeremez).
 
