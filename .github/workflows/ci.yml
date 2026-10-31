@@ -17,7 +17,18 @@ jobs:
         with:
           python-version: "3.13"
 
-      # ffmpeg/ffprobe are preinstalled on ubuntu-latest; app/audio_bgm.py shells out to them.
+      # ffmpeg/ffprobe are NOT on the ubuntu-latest image: the first real CI run
+      # failed 15 tests with FileNotFoundError: 'ffmpeg'. The earlier comment here
+      # claimed they were preinstalled — that was wrong, and it only showed up
+      # once CI actually ran. app/audio_bgm.py, app/render.py and
+      # app/publish_quality.py all shell out to them.
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          ffmpeg -version | head -1
+          ffprobe -version | head -1
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip

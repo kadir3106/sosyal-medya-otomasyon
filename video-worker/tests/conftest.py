@@ -28,6 +28,7 @@ Four guards, all opt-out via the `live` marker:
 """
 from __future__ import annotations
 
+import shutil
 import socket
 
 import pytest
@@ -37,6 +38,35 @@ from app.script_quality import ScriptQualityResult
 _PIPELINE_MODE_ENV = ("DIRECTOR_ENABLED", "DOCUMENTARY_ENGINE_V2")
 
 _LOOPBACK = {"127.0.0.1", "::1", "localhost", "0.0.0.0"}
+
+HAS_FFMPEG = bool(shutil.which("ffmpeg") and shutil.which("ffprobe"))
+
+# ffmpeg/ffprobe gerektiren testler. Yalnızca kod yolu gerçekten ffmpeg çağırıyorsa
+# buraya eklenir; mock'lanmış render testleri etkilenmez.
+_REQUIRES_FFMPEG_PREFIXES = (
+    "tests/test_documentary_v2_stage_e.py",
+    "tests/test_documentary_v2_stage_f.py",
+    "tests/test_documentary_v2_stage_f1.py",
+    "tests/test_phase_a_quality.py",
+    "tests/test_pipeline.py",
+    "tests/test_pipeline_pending.py",
+)
+
+
+def requires_ffmpeg(reason: str = "ffmpeg/ffprobe not installed") -> pytest.MarkDecorator:
+    """Ağır ortam bağımlılığı için açık skip; ham FileNotFoundError yerine."""
+
+    return pytest.mark.skipif(not HAS_FFMPEG, reason=reason)
+
+
+def needs_ffmpeg(nodeid: str) -> bool:
+    """Bu test düğümü ffmpeg/ffprobe çağırıyor mu?
+
+    Ayrı fonksiyon: fixture'ın kararı alt süreç başlatmadan test edilebilsin.
+    (İlk denemede guard'ı `PATH=""` ile alt süreçte sınamıştım; Python PATH'siz
+    başlayamadığı için test 41 dakika asıldı. Kararı saf fonksiyona taşıdım.)
+    """
+    return any(nodeid.startswith(p) for p in _REQUIRES_FFMPEG_PREFIXES)
 
 
 def _is_external(address) -> bool:
@@ -55,6 +85,25 @@ class ExternalNetworkBlocked(OSError):
     cost ~19-27 s of backoff: measured on the full suite, the block turned a
     72 s run into 312 s. A plain OSError propagates without retry.
     """
+
+
+@pytest.fixture(autouse=True)
+def _skip_without_ffmpeg(request):
+    """ffmpeg gerektiren testleri, eksikse AÇIK bir sebeple atla.
+
+    Ölçüm: CI'ın ilk gerçek koşusunda 15 test `FileNotFoundError: 'ffmpeg'` ile
+    düştü. Bu bir kod hatası değil ortam eksiğiydi, ama ham traceback operatöre
+    "kod bozuk" gibi görünüyor. Skip hem doğru bilgi verir hem CI'ı yeşil tutar
+    (kaynağı olmayan bir bağımlılık yüzünden değil, ölçülmüş bir eksiklik
+    yüzünden).
+
+    `HAS_FFMPEG` tek yerde tanımlı olduğu için yeni test dosyası eklerken
+    listeye bakmak yeterli.
+    """
+    if HAS_FFMPEG:
+        return
+    if needs_ffmpeg(request.node.nodeid):
+        pytest.skip("ffmpeg/ffprobe not installed")
 
 
 @pytest.fixture(autouse=True)
