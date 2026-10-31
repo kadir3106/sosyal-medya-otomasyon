@@ -1,6 +1,6 @@
 """Shared test guards — keep the suite hermetic.
 
-Three guards, all opt-out via the `live` marker:
+Four guards, all opt-out via the `live` marker:
 
 1. **External network is blocked.** Measured on the real suite: 203 outbound
    connection attempts across 100 tests, yet the suite still passes with them
@@ -11,12 +11,18 @@ Three guards, all opt-out via the `live` marker:
    flaky and spent real API quota. Loopback stays open: Starlette's TestClient
    builds its anyio portal over a local socket.
 
-2. Ambient `.env` leaks DIRECTOR_ENABLED/DOCUMENTARY_ENGINE_V2. The pipeline
+2. **Production HTTP retries are disabled.** `app.http_client.session` retries 3
+   times with a 1.5 backoff factor. Guard 1 makes every leaked call fail, but the
+   retry policy would still pay the whole backoff first: measured, that turned a
+   72 s run into 344 s. Retries exist for flaky real APIs; in tests there is
+   nothing to retry.
+
+3. Ambient `.env` leaks DIRECTOR_ENABLED/DOCUMENTARY_ENGINE_V2. The pipeline
    reads those at call time, so a test that mocks the legacy stock path
    silently runs the real Director path instead: live Pexels + LLM calls, 429
    retries (~30 s each), and the mocked functions never get called.
 
-3. pipeline.refine_script hits Wikipedia + the LLM quality editor. Tests that
+4. pipeline.refine_script hits Wikipedia + the LLM quality editor. Tests that
    assert on real refinement behaviour call app.script_quality.refine_script
    directly and are unaffected.
 """

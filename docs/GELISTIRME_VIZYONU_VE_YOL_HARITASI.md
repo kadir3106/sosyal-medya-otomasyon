@@ -880,6 +880,20 @@ Bu bir **test kırılganlığıydı, üretim hatası değil**: kapı her durumda
 
 > Bu hata ilk kez tam pakette, `/publish` değişiklikleriyle aynı koşuda göründü. Değişiklikler `git stash`'lenip paket yeniden koşturularak benim neden olmadığım doğrulandı (644 passed), sonra izole koşuda 12 denemede 1 kez üreyerek kaynağı bulundu.
 
+### Dış ağ sızıntısı (madde 20)
+
+Paket "hermetic" değildi: `DIRECTOR_ENABLED`/`DOCUMENTARY_ENGINE_V2` temizlenmiş olsa da testler hâlâ gerçek ağa çıkıyordu. Ölçüm (her soket bağlantısını loglayan bir sarmalayıcıyla, 100 test): **203 dış bağlantı denemesi**. Kaynaklar `_ensure_synthetic_ambient`'in ffmpeg yardımcıları, Pollinations görsel fallback'i, Wikipedia doğrulaması ve stub'lanmayı unutmuş yayıncılardı — yerel `.env`'de 23 kimliğin 14'ü canlı olduğu için bunlar gerçek API çağrısına dönüşüyordu (`api.x.com` 400 bunun kanıtı).
+
+Bunlar **bağımlılık değil, sızıntı**: aynı soketleri tamamen engelleyince paket yine `exit 0` verdi. Maliyetleri gerçekti — API kotası harcıyor, koşuları yavaşlatıyor ve ağ dalgalanmasına açık hale getiriyorlardı.
+
+`conftest.py`'ye `_block_external_network` eklendi: loopback dışı her `connect`'i reddediyor. Loopback açık kalıyor çünkü Starlette `TestClient` anyio portalını yerel soket üzerinden kuruyor. Reddetme **düz `OSError`** ile yapılıyor, `requests` istisnasıyla değil: ilk sürüm `requests.ConnectionError` fırlatıyordu ve urllib3 bunu 3 kez 1,5 kat backoff ile yeniden denedi, paket 72 sn → **312 sn** oldu. Düz `OSError` yeniden denenmiyor.
+
+Bu tek başına yetmedi (344 sn), çünkü `app.http_client.session` modül düzeyinde tekil ve `Retry(total=3, backoff_factor=1.5)` taşıyor. İkinci guard (`_disable_http_retries`) o politikayı her test için sıfırlıyor; `session.adapters` sözlüğü yedeklenip geri konuyor, böylece üretim politikasını doğrulayan `test_http_client` hâlâ `total == 3` görüyor. (İlk denemem mount'ları geri almadı ve o iki testi kırdı — modül düzeyinde tekil bir nesneye kalıcı mount, testler arası sızıntıdır.)
+
+Sonuç: **646 passed, 3 skipped, 50 sn** (sızıntılı 72 sn, engelli ama retry'lı 344 sn).
+
+> Aynı koşuda `test_publish_concurrency` da düzeltildi: paket çalışırken `jsonstore`'un gerçek `jobs.db`'sini kirletiyordu.
+
 ### Commit geçmişi
 
 | Commit | İçerik |
@@ -901,6 +915,7 @@ Bu bir **test kırılganlığıydı, üretim hatası değil**: kapı her durumda
 | `de4c4d7` | Eşzamanlı silmede geçici `WinError 5` retry'ı (1 dosya) |
 | `77f1c51` | Unlink retry + çökme bırakma testleri (1 dosya) |
 | `3181eb7` | Kapı testi `frozenset` sırasına bağımlı olmaktan çıkarıldı (1 dosya) |
+| `08ae6e1` | Dış ağ engeli + test retry politikası sıfırlandı; paket 50 sn (2 dosya) |
 
 > Bu belgeyi güncelleyen commit ayrıca `docs:` önekiyle geçmişte bulunabilir (kendi hash'ini içeremez).
 
