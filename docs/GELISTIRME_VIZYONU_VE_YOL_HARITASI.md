@@ -690,12 +690,14 @@ Faz 0'ın P0 çekirdeği uygulandı ve doğrulandı.
 | 18 | Eşzamanlı silmede geçici `WinError 5` yeniden deneniyor | `app/main.py`, `tests/test_publish_concurrency.py` | Paralel `/cleanup` **500 dönmüyor** (ölçüm: 8 thread'de 20/20 → 0/20) |
 | 19 | Kapı testi `frozenset` sırasına bağımlı olmaktan çıkarıldı | `tests/test_director_gate_regression.py` | Test **hash seed'e göre dalgalanmıyor** (ölçüm: 6 farklı sıralama → 30 seed'de 0 hata) |
 | 20 | Dış ağ engellendi, `session` retry politikası testlerde sıfırlandı | `tests/conftest.py` | **203 dış bağlantı → 0**; paket 72 sn → **50 sn**; `.env` yokken de 646 passed |
+| 21 | Yayın kaydı `job_id` + `approved_sha256` taşıyor; manifest okuyucusu ve `provenance.trace_publication` eklendi | `app/publish_log.py`, `app/provenance.py` (yeni), `app/documentary_v2/telemetry.py`, `app/main.py`, `app/analytics.py` | "Bu yayın hangi işin/manifestin/onayın ürünü?" **artık cevaplanıyor** (`trace.complete=True`); manifest okuyan tüketici 0 → 1 |
+| 22 | Yayın öncesi teknik kalite kapısı (süre/ses akışı/ortalama seviye) | `app/publish_quality.py` (yeni), `app/errors.py`, `app/main.py`, `app/telegram_bot.py` | Sessiz/boş/çok kısa video **yayınlanamıyor** (ölçüm: sessiz -91 dB → red, sesli -21 dB → geçti); reddedilen dosya claim'i tüketmiyor; Telegram'da retry butonu sunulmuyor |
 
 ### Ölçülen sonuç
 
 | Metrik | Önce | Sonra |
 |---|---|---|
-| Tam paket | **tamamlanamıyordu** (4 dosya askıda) | **646 passed, 3 skipped, 0 failed** |
+| Tam paket | **tamamlanamıyordu** (4 dosya askıda) | **668 passed, 3 skipped, 0 failed** |
 | Süre | belirsiz (askı) | **50 sn** (dış ağ engeli + retry kapalı) |
 | Başarısız test | 5 | **0** |
 
@@ -857,7 +859,9 @@ Askı sanılan şey aslında **gerçek ağ retry'ı**ydı: `.env` içindeki `DIR
 - `pytest-timeout` ile per-test timeout (yeni bağımlılık gerektiriyor)
 - Push (41 commit lokal `cursor/hybrid-flux-architecture` dalında)
 - `video-worker/video-output/*` üretilmiş artefaktları ve `_tmp_*` scratch dizinleri (bilinçli olarak commit edilmedi)
-- Faz 1'in geri kalanı (ContentJob artefakt manifesti, publication durum sorgulama, kalite kapıları)
+- Faz 1'in geri kalanı (ortak job state machine, ayarlanabilir artefakt manifesti versiyonlama)
+- Teknik kalite kapısının kalan boyutları: altyazı zamanlaması/satır kuralları, clipping, ani seviye sıçraması, `loudnorm` hedefi doğrulaması (şu an süre + ses akışı + ortalama seviye kontrol ediliyor)
+- Yayın sonucu bilinmeyen işler için **otomatik** durum sorgulaması (`get_publication_status` adaptörlerde yok; operatör kararı bekliyor)
 - Zombi upload thread'leri için süreç düzeyinde izolasyon (`shutdown(wait=False)` artık beklemiyor; thread'ler süreç bitene kadar yaşayabilir)
 - `jsonstore` kilidi yalnızca **süreç-içi**; birden çok video-worker replikası çalışırsa dosya düzeyinde kilit gerekir
 - `jobs.py` `write_pending_mirror` hâlâ düz `write_text` ile yazıyor (atomik değil); okuma tarafı artık SQLite'ı tercih ettiği için pratikte yarım dosya okunmuyor ama dosya düzeyinde garanti yok
@@ -895,6 +899,52 @@ Sonuç: **646 passed, 3 skipped, 50 sn** (sızıntılı 72 sn, engelli ama retry
 
 > Aynı koşuda `test_publish_concurrency` da düzeltildi: paket çalışırken `jsonstore`'un gerçek `jobs.db`'sini kirletiyordu.
 
+### Yayın → iş → manifest zinciri (madde 21)
+
+Faz 1'in çıkış kriteri "her yayın hangi script, medya, model ve onayla yapıldığı izlenebilmeli". Ölçtüm, zincir kopuktu — ama göründüğü gibi değil:
+
+| Ölçüm | Sonuç |
+|---|---|
+| Manifest her üretimde yazılıyor mu? | **Evet** (`DOCUMENTARY_ENGINE_V2_MANIFEST_<job_id>.json`, `pipeline.py`'de `emit_legacy_job_manifest`) |
+| Yayın kaydı hangi anahtarları taşıyor? | `['kind', 'platforms', 'published_at', 'title']` |
+| Kayıtta `job_id` var mı? | **Hayır** |
+| Manifesti okuyan tüketici sayısı | **0** |
+
+Yani 24k satırlık telemetri altyapısı her iş için dosya üretiyordu, ama **hiçbir kayda bağlanmıyor ve hiç kimse okumuyordu**. Üç sorun birbirini gizlemiş.
+
+Düzeltme üç parça:
+
+1. `publish_log.build_publish_entry()` — kaydın tek şeması. Artık `job_id` ve `approved_sha256` taşıyor. İkincisi bilinçli: onayın hangi dosyaya verildiğinin tek doğrulanabilir kanıtı.
+2. `telemetry.manifest_path()` + `read_production_manifest()` — yazıcı ve okuyucu **aynı** adlandırmayı kullanıyor. Önce ayrı yazılsaydı zincir sessizce kopabilirdi; bir test bunu kilitliyor.
+3. `app/provenance.py` (yeni) — `trace_publication()`: yayın kaydını işe ve manifeste bağlar, `sha256_match` ile onay-dosya uyumunu ve `complete` ile izin tam olup olmadığını döndürür. Eksik parça hata değil, `None` — eski kayıtlarda `job_id` yok ve bu normal.
+
+Ayrıca `load_recent_entries` sağlamlaştırıldı: bozuk JSON'da artık çökmüyor ve `job_id`'siz eski kayıtları filtre dışı bırakmıyor (önce `e["published_at"]` doğrudan erişiliyordu).
+
+Ölçüm sonrası: kayıt anahtarları `['approved_sha256', 'job_id', 'kind', 'platforms', 'published_at', 'title']`, `trace.complete = True`.
+
+### Yayın öncesi kalite kapısı (madde 22)
+
+Yol haritası hedefi "sessiz/bozuk video yayını = 0". Ölçtüm: `_run_publish` videoyu **hiç açmıyordu** — `app/main.py`'de yalnızca `_verify_approved_artifact` vardı, yani *"onayladığım dosya mı?"* sorusu soruluyordu, *"yayınlanabilir bir dosya mı?"* sorusu hiç sorulmuyordu. BGM regresyonu (sessiz video) üretim tarafında düzeltilmişti ama yayın öncesi ikinci savunma hattı yoktu. Onaylanmış süresi 0 veya sesi boş bir MP4 yayınlanabilirdi.
+
+`app/publish_quality.py` (yeni) gerçek medyayla ölçüldü — ffmpeg ile üretilen dosyalar üzerinde:
+
+| Durum | Karar | Ölçüm |
+|---|---|---|
+| Sesli video (440 Hz tone) | ✅ geçti | -21.1 dB |
+| Sessiz video (boş ses akışı) | ❌ **reddedildi** | `audio_silent`, -91.0 dB |
+| Ses akışı yok | ❌ reddedildi | `no_audio_stream` |
+| 1 sn video | ❌ reddedildi | `too_short` |
+| Bozuk konteyner | ✅ geçti | `probe_unavailable` |
+| Dosya yok | ❌ reddedildi | `video_missing` |
+
+Tasarım kararı: kapı **yumuşak**. Ölçüm alınamazsa (ffprobe yok, bozuk konteyner) yayın bloklanmıyor — video-worker ffprobe olmadan da çalışmaya devam etmeli. Yalnızca *ölçülmüş* ihlal engelliyor. Aynı sebeple `bgm_silence` tek başına ret nedeni değil: sentetik ambient fallback'i de sessiz görünebilir, gerçek ses ölçümü daha güvenilir.
+
+Kritik sıra detayı: kapı `claim_for_publish`'ten **önce** çalışıyor. Aksi hâlde reddedilen video claim'i tüketir, iş `publishing`'de kalır ve `/generate` sonsuza dek 409 verirdi — bu hata daha önce bir kez yaşanmıştı (madde 17). Bir test bunu kilitliyor: reddedilen videoda `has_blocking_job` `False` kalmalı ve hiçbir platform çağrılmamalı.
+
+HTTP karşılığı **422** (409 değil): dosya var ve onaylı, ama yayınlanabilir değil. Retry aynı dosyayla aynı sonucu verir; operatör yeniden üretmeli. Görsel kartlar kapıyı atlıyor — onlarda ses akışı beklenmiyor.
+
+Telegram tarafı da bağlandı: `QualityGateError` yakalanmazsa operatör ham bir hata görürdü. Artık ret nedeni Türkçe okunur metne çevriliyor ("ses tamamen sessiz", "video çok kısa"…) ve **retry butonu sunulmuyor** — aynı dosyayı tekrar göndermek aynı sonucu verir, buton operatörü sonsuz döngüye sokardı.
+
 ### Commit geçmişi
 
 | Commit | İçerik |
@@ -919,6 +969,7 @@ Sonuç: **646 passed, 3 skipped, 50 sn** (sızıntılı 72 sn, engelli ama retry
 | `08ae6e1` | Dış ağ engeli + test retry politikası sıfırlandı; paket 50 sn (2 dosya) |
 | `3fa5e80` | Bu belgeye madde 20 (dış ağ sızıntısı) |
 | `d9317c1` | CI yorumundaki doğrulanmış test sayısı güncellendi (1 dosya) |
+| `c355820` | Madde 20 ölçüm tablosu + commit günlüğü |
 
 > Bu belgeyi güncelleyen commit ayrıca `docs:` önekiyle geçmişte bulunabilir (kendi hash'ini içeremez).
 

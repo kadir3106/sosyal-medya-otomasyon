@@ -29,6 +29,7 @@ from app.errors import (
     AlreadyPublishedError,
     ArtifactChangedError,
     PublishOutcomeUnknownError,
+    QualityGateError,
 )
 from app.image_gen import generate_image_content, render_card
 from app import jobs as job_store
@@ -36,6 +37,7 @@ from app.joblog import log_event
 from app.pitch_gen import generate_pitches
 from app.pipeline import generate_video, _generate_video_sync
 from app.publish_log import append_publish_log, build_publish_entry
+from app import publish_quality
 from app.publishers.linkedin import upload_to_linkedin
 from app.publishers.meta import upload_to_facebook, upload_to_instagram
 from app.publishers.pinterest import upload_to_pinterest
@@ -494,6 +496,35 @@ def _verify_approved_artifact(payload: dict) -> None:
         )
 
 
+def _verify_publishable_quality(payload: dict, kind: str) -> None:
+    """Yayın öncesi teknik kalite kapısı.
+
+    Hash doğrulaması "onayladığım dosya mı?" sorusunu yanıtlar; bu kontrol
+    "yayınlanabilir bir dosya mı?" sorusunu. Önceden ikincisi hiç sorulmuyordu:
+    diskte süresi 0, sesi boş veya yarım yazılmış bir MP4 onaylandığı sürece
+    yayınlanabiliyordu (yol haritası hedefi: sessiz/bozuk video yayını = 0).
+
+    Görsel kartlar atlanır — onlarda ses akışı beklenmiyor.
+    """
+    if kind != "video":
+        return
+
+    # Onayla aynı dosya: `video_sha256` hangi dosya üzerinden hesaplandıysa o.
+    path = payload.get("split_screen_path") or payload.get("video_path") or ""
+    quality = payload.get("quality") or {}
+    verdict = publish_quality.evaluate(
+        path, bgm_silence=bool(quality.get("bgm_silence"))
+    )
+    if not verdict.ok:
+        log_event(
+            job_id=str(payload.get("job_id") or ""),
+            stage="quality_gate_rejected",
+            reason=verdict.reason,
+            **{k: v for k, v in verdict.to_dict().items() if k != "reason"},
+        )
+        raise QualityGateError(str(payload.get("job_id") or ""), verdict.reason)
+
+
 def _run_publish(payload: dict) -> dict:
     kind = payload.get("kind", "video")
     job_id = Path(payload.get("video_filename") or payload.get("image_filename") or "unknown").stem
@@ -501,6 +532,7 @@ def _run_publish(payload: dict) -> dict:
 
     # Verify first: a mismatch must not consume the publish claim and strand the job.
     _verify_approved_artifact(payload)
+    _verify_publishable_quality(payload, kind)
 
     # Claim before any upload: a duplicate /publish would post publicly twice.
     if not job_store.claim_for_publish(media_dir, job_id, kind=kind):
@@ -784,6 +816,10 @@ def publish(payload: PublishRequest):
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ArtifactChangedError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except QualityGateError as exc:
+        # 422: dosya var ve onaylı, ama yayınlanabilir kalitede değil. Retry
+        # aynı dosyayla aynı sonucu verir — operatör yeniden üretmeli.
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except PublishOutcomeUnknownError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except AllPlatformsFailedError as exc:

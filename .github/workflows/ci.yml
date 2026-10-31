@@ -25,6 +25,20 @@ jobs:
 
       # No .env is present here, which is the point: tests/conftest.py keeps the suite
       # hermetic (legacy pipeline mode, stubbed refine_script, external network blocked,
-      # retries disabled). Verified 646 passed, 3 skipped in ~50 s.
+      # retries disabled). Verified 668 passed, 3 skipped in ~55 s.
       - name: Run tests
         run: pytest tests -q
+
+  secret-scan:
+    # Izlenen dosyalarda sır deseni arar. Yerelde 385 dosyada temiz ölçüldü.
+    # Job'u ayrı tutuyoruz: testler kırılsa da sızıntı kontrolü her zaman koşsun.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Scan tracked files for secrets
+        run: python scripts/secret_scan.py .

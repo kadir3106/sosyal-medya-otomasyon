@@ -11,6 +11,7 @@ from app.errors import (
     AlreadyPublishedError,
     ArtifactChangedError,
     PublishOutcomeUnknownError,
+    QualityGateError,
 )
 
 API_URL = "https://api.telegram.org/bot{token}/{method}"
@@ -100,6 +101,17 @@ def _format_summary(title: str, results: list[dict]) -> str:
         else:
             lines.append(f"❌ {result['platform']}: {result.get('error', 'hata')}")
     return "\n".join(lines)
+
+
+def _quality_reason_tr(reason: str) -> str:
+    """Kalite kapısı ret nedenini operatör diline çevirir."""
+    return {
+        "video_missing": "video dosyası bulunamadı",
+        "no_video_stream": "video akışı yok",
+        "no_audio_stream": "ses akışı yok — sessiz video",
+        "too_short": "video çok kısa",
+        "audio_silent": "ses tamamen sessiz",
+    }.get(reason, reason or "bilinmeyen neden")
 
 
 def _retry_keyboard(job_id: str) -> dict:
@@ -291,6 +303,17 @@ def _publish_and_report(
             chat_id,
             f'⚠️ "{title}" — onaylanan dosya artık geçerli değil ({exc.reason}). '
             "Yayın yapılmadı; videoyu yeniden üretip onaylayın.",
+        )
+        return
+    except QualityGateError as exc:
+        # Retry butonu YOK: aynı dosyayı tekrar göndermek aynı sonucu verir.
+        # Operatör yeniden üretmeli (yeni job id).
+        send_message(
+            token,
+            chat_id,
+            f'⚠️ "{title}" — video teknik kalite kontrolünden geçmedi '
+            f"({_quality_reason_tr(exc.reason)}). "
+            "Yayın yapılmadı; videoyu yeniden üretin.",
         )
         return
     except PublishOutcomeUnknownError as exc:

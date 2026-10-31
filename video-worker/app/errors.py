@@ -25,6 +25,21 @@ class ArtifactChangedError(Exception):
         self.reason = reason
 
 
+class QualityGateError(Exception):
+    """Video yayınlanabilir teknik kalitede değil (sessiz, çok kısa, akış yok).
+
+    Yayın claim'inden ÖNCE fırlatılır: reddedilen dosya claim'i tüketmemeli,
+    yoksa iş 'publishing'de kalıp /generate'i kilitler. Operatörün retry
+    butonu yeniden üretim yapmalı — aynı dosyayı tekrar göndermek aynı sonucu
+    verir.
+    """
+
+    def __init__(self, job_id: str, reason: str):
+        super().__init__(f"Job {job_id}: quality gate rejected ({reason})")
+        self.job_id = job_id
+        self.reason = reason
+
+
 class PublishOutcomeUnknownError(Exception):
     """Yükleme zaman aşımına uğradı; platformda yayınlanmış olabilir.
 

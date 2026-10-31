@@ -1,7 +1,7 @@
 import json
 from unittest.mock import patch
 
-from app.errors import AllPlatformsFailedError
+from app.errors import AllPlatformsFailedError, QualityGateError
 from app.telegram_bot import _load_offset, _save_offset, handle_callback
 
 
@@ -81,6 +81,31 @@ def test_handle_callback_approve_all_failed_sends_retry_button(tmp_path):
 
     kwargs = mock_send.call_args.kwargs
     assert kwargs["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "retry:job3"
+
+def test_handle_callback_quality_gate_sends_no_retry_button(tmp_path):
+    """Kalite kapısı reddi: retry butonu OLMAMALI.
+
+    Aynı dosyayı tekrar göndermek aynı sonucu verir; operatörün yeniden
+    üretmesi gerekir. Retry butonu sunmak operatörü sonsuz döngüye sokar.
+    """
+    (tmp_path / "pending.json").write_text(
+        json.dumps({"job_id": "job-q", "title": "Sessiz", "video_filename": "job-q.mp4"}),
+        encoding="utf-8",
+    )
+
+    def publish_fn(payload):
+        raise QualityGateError("job-q", "audio_silent")
+
+    with patch("app.telegram_bot.send_message") as mock_send:
+        handle_callback(
+            "approve:job-q", str(tmp_path), "TOKEN", "123", publish_fn, lambda f: None
+        )
+
+    text = mock_send.call_args.args[2]
+    assert "kalite kontrolünden geçmedi" in text
+    assert "ses tamamen sessiz" in text
+    assert "reply_markup" not in mock_send.call_args.kwargs
+
 
 
 def test_handle_callback_retry_reads_sidecar_and_republishes(tmp_path):
