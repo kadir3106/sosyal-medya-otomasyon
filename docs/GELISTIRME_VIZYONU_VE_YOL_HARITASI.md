@@ -995,6 +995,8 @@ Bilinçli sınırlar:
 | `c355820` | Madde 20 ölçüm tablosu + commit günlüğü |
 | `1a5b777` | Yayın → iş → manifest zinciri (madde 21, 6 dosya) |
 | `cd7628c` | Yayın öncesi kalite kapısı + CI secret scan (madde 22, 10 dosya) |
+| `31ec209` | Secret scan test fixture'ları runtime'da kuruluyor (1 dosya) |
+| `557e7ef` | Timeout sonrası durum sorgusu: inflight + TikTok/YouTube API (madde 23, 7 dosya) |
 
 > Bu belgeyi güncelleyen commit ayrıca `docs:` önekiyle geçmişte bulunabilir (kendi hash'ini içeremez).
 
