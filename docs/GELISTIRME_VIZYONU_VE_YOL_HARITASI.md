@@ -854,7 +854,7 @@ Askı sanılan şey aslında **gerçek ağ retry'ı**ydı: `.env` içindeki `DIR
 ### Henüz yapılmadı
 
 - Credential rotation ve Git history temizliği
-- Lint (bilinçli olarak atlandı: kod tabanında lint baseline yok, varsayılan ruff/flake8 ilk koşuda kırmızı olur ve CI'ı görmezden gelmeye alıştırır)
+- CI'ın kalan 2 kontrolü: `docker build` (Docker daemon bu ortamda çalışmıyor → yerelde doğrulanamadı, bu yüzden eklenmedi) ve `ruff` (lint baseline yok)
 - Playwright kararı → **verildi**: CI'a eklenmedi, host-only kaldı (hiçbir test `tiktok_browser`'ı import etmiyor)
 - `pytest-timeout` ile per-test timeout (yeni bağımlılık gerektiriyor)
 - Push (41 commit lokal `cursor/hybrid-flux-architecture` dalında)
@@ -970,6 +970,8 @@ Telegram tarafı da bağlandı: `QualityGateError` yakalanmazsa operatör ham bi
 | `3fa5e80` | Bu belgeye madde 20 (dış ağ sızıntısı) |
 | `d9317c1` | CI yorumundaki doğrulanmış test sayısı güncellendi (1 dosya) |
 | `c355820` | Madde 20 ölçüm tablosu + commit günlüğü |
+| `1a5b777` | Yayın → iş → manifest zinciri (madde 21, 6 dosya) |
+| `cd7628c` | Yayın öncesi kalite kapısı + CI secret scan (madde 22, 10 dosya) |
 
 > Bu belgeyi güncelleyen commit ayrıca `docs:` önekiyle geçmişte bulunabilir (kendi hash'ini içeremez).
 

@@ -4,6 +4,11 @@ Bir tarayıcı "temiz" dediğinde bunun bir anlamı olması için hem gerçek s�
 yakalaması hem de yer tutucuları/örnekleri yok sayması gerekir. Ölçülen gerçek
 durum: 385 izlenen dosyada bulgu yok; bu testler tarayıcının kör olmadığını
 kanıtlıyor.
+
+ÖNEMLİ: sahte sırlar burada **dinamik** kuruluyor, literal yazılmıyor. Dosya
+izlenen bir dosya olduğu için literal yazılsaydı tarayıcı kendi test fixture'ını
+sır olarak raporlardı (ölçüldü: tam paket 1 hata verdi). Parçalara bölmek hem
+bunu önler hem de testin niyetini korur.
 """
 import subprocess
 import sys
@@ -14,29 +19,39 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "scripts"
 from secret_scan import main as scan_main  # noqa: E402
 from secret_scan import scan_text  # noqa: E402
 
+_RANDOM = "abcdefghijklmnopqrstuvwxyz0123456789"
+
+
+def _fake(prefix: str, n: int = 24) -> str:
+    """Desenle eşleşen ama bu dosyada literal olarak bulunmayan sahte sır."""
+    return prefix + _RANDOM[:n]
+
 
 def test_detects_openai_style_key():
-    hits = scan_text('OPENAI_API_KEY = "sk-abcdefghijklmnopqrstuvwx"')
+    hits = scan_text(f'OPENAI_API_KEY = "{_fake("sk-")}"')
     assert [h[0] for h in hits] == ["openai_key"]
 
 
 def test_detects_groq_key():
-    hits = scan_text('GROQ_API_KEY="gsk_abcdefghijklmnopqrstuvwx"')
+    hits = scan_text(f'GROQ_API_KEY="{_fake("gsk_")}"')
     assert any(h[0] == "groq_key" for h in hits)
 
 
 def test_detects_telegram_bot_token():
-    hits = scan_text('TELEGRAM_BOT_TOKEN = "123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"')
+    # Bot id 8-10 hane, iki nokta, en az 30 karakter: desenin tam sınırı.
+    hits = scan_text(f'TELEGRAM_BOT_TOKEN = "{_fake("123456789:", 33)}"')
     assert any(h[0] == "telegram_bot_token" for h in hits)
 
 
 def test_detects_private_key_block():
-    hits = scan_text("-----BEGIN RSA PRIVATE KEY-----")
+    marker = "-----BEGIN" + " RSA PRIVATE KEY-----"
+    hits = scan_text(marker)
     assert any(h[0] == "private_key" for h in hits)
 
 
 def test_detects_assigned_long_secret():
-    hits = scan_text('META_ACCESS_TOKEN="EAAGabcdefghijklmnopqrstuvwxyz123456"')
+    # `EAAG` + 32 karakter: Meta token biçimi, uzun atama desenine düşer.
+    hits = scan_text(f'META_ACCESS_TOKEN="{_fake("EAAG", 32)}"')
     assert any(h[0] == "assigned_secret" for h in hits)
 
 
@@ -53,10 +68,11 @@ def test_ignores_placeholders_and_examples():
 
 def test_does_not_leak_the_secret_in_findings():
     """Bulgu raporu sırrı tekrar yazmamalı (CI log'u herkese açık olabilir)."""
-    hits = scan_text('X_TOKEN="supersecretvalue1234567890abcd"')
+    secret = _fake("sk-")
+    hits = scan_text(f'X_TOKEN="{secret}"')
     assert hits
     snippet = hits[0][2]
-    assert "supersecretvalue" not in snippet
+    assert secret not in snippet
 
 
 def test_repo_itself_is_clean():
@@ -74,6 +90,6 @@ def test_main_returns_nonzero_on_finding(tmp_path, monkeypatch):
     import secret_scan
 
     monkeypatch.setattr(secret_scan, "tracked_files", lambda: [Path("leak.py")])
-    (tmp_path / "leak.py").write_text('KEY = "sk-abcdefghijklmnopqrstuvwx"', encoding="utf-8")
+    (tmp_path / "leak.py").write_text(f'KEY = "{_fake("sk-")}"', encoding="utf-8")
 
     assert scan_main([str(tmp_path)]) == 1
