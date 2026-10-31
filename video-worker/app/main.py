@@ -37,7 +37,7 @@ from app.joblog import log_event
 from app.pitch_gen import generate_pitches
 from app.pipeline import generate_video, _generate_video_sync
 from app.publish_log import append_publish_log, build_publish_entry
-from app import publish_quality
+from app import publish_quality, publish_status
 from app.publishers.linkedin import upload_to_linkedin
 from app.publishers.meta import upload_to_facebook, upload_to_instagram
 from app.publishers.pinterest import upload_to_pinterest
@@ -468,6 +468,20 @@ def _run_parallel_uploads(tasks: list[tuple[str, object, tuple, dict]]) -> list[
     ]
 
 
+def _make_inflight_recorder(media_dir: Path, job_id: str, platform: str):
+    """Yayıncıya verilecek `on_inflight` kancası.
+
+    Kanca, platform kimliğini üretilir üretilmez diske yazıyor. Timeout sonrası
+    durum sorgusunun tek dayanağı bu kayıt: `upload_to_*` dönmediği için kimlik
+    başka hiçbir yerde yok (bkz. app/publish_status.py).
+    """
+
+    def record(identity: dict) -> None:
+        publish_status.record_inflight(media_dir, job_id, platform, identity)
+
+    return record
+
+
 def _verify_approved_artifact(payload: dict) -> None:
     """Onaylanan dosyanın hâlâ aynı dosya olduğunu doğrular.
 
@@ -611,6 +625,7 @@ def _publish_claimed(payload: dict, kind: str, job_id: str, media_dir: Path) -> 
                     "refresh_token": config.YOUTUBE_REFRESH_TOKEN,
                     "thumbnail_path": payload.get("thumbnail_path", ""),
                     "pinned_comment": payload.get("pinned_comment", ""),
+                    "on_inflight": _make_inflight_recorder(media_dir, job_id, "youtube"),
                 },
             ),
             (
@@ -623,6 +638,9 @@ def _publish_claimed(payload: dict, kind: str, job_id: str, media_dir: Path) -> 
                     "client_secret": config.TIKTOK_CLIENT_SECRET,
                     "token_path": config.TIKTOK_TOKEN_PATH,
                     "audited": config.TIKTOK_AUDITED,
+                    # publish_id, büyük gövde yüklenmeden önce diske yazılır:
+                    # timeout tam o arada oluşuyor ve kimlik başka yerde yok.
+                    "on_inflight": _make_inflight_recorder(media_dir, job_id, "tiktok"),
                 },
             ),
             (
@@ -711,15 +729,50 @@ def _publish_claimed(payload: dict, kind: str, job_id: str, media_dir: Path) -> 
         results=results,
         approved_sha256=payload.get("video_sha256", "") or "",
     )
-    append_publish_log(str(media_dir / "published_log.json"), entry)
 
     any_success = any(r["status"] == "success" for r in results)
     any_unknown = any(r["status"] == "unknown" for r in results)
 
     if any_unknown:
-        # Yükleme zaman aşımına uğradı ama thread çalışmaya devam etti: platformda
-        # yayınlanmış OLABİLİR. Körlemesine retry sunmak aynı videoyu iki kez yayınlar,
-        # bu yüzden retry sidecar yazmıyor ve dosyayı silmiyoruz.
+        # Yükleme zaman aşımına uğradı ama thread çalışmaya devam etti:
+        # platformda yayınlanmış OLABİLİR. Yol haritası kuralı: körlemesine
+        # retry değil, ÖNCE DURUM SORGUSU.
+        #
+        # Ölçüm (eklemeden önce): sorgulanacak fonksiyon yoktu, `unknown` tek
+        # savunmaydı — operatör platformu elle kontrol etmek zorundaydı.
+        unknown_platforms = [r["platform"] for r in results if r["status"] == "unknown"]
+        queried = publish_status.query_all(media_dir, job_id, unknown_platforms)
+        for status in queried:
+            log_event(
+                job_id, "publish_status_query",
+                platform=status.platform, state=status.state, detail=status.detail,
+            )
+        entry["status_query"] = [s.to_dict() for s in queried]
+
+    # Kayıt her durumda yazılır (sorgu sonucu dahil): operatör "ne oldu?"
+    # sorusunun cevabını platformda değil, bu dosyada bulmalı.
+    append_publish_log(str(media_dir / "published_log.json"), entry)
+
+    if any_unknown:
+        if any(s.is_published for s in queried):
+            # GERÇEKTEN YAYINLANDI: bu bir başarıdır, hata değil. Retry
+            # sunmak (veya "bilinmiyor" demek) operatörü aynı videoyu ikinci
+            # kez yayınlamaya iterdi.
+            log_event(
+                job_id, "publish_recovered_after_timeout",
+                platforms=[s.platform for s in queried if s.is_published],
+            )
+            if cleanup_path:
+                _unlink_quietly(Path(cleanup_path))
+            for extra in cleanup_extra:
+                _unlink_quietly(Path(extra))
+            job_store.mark_done(media_dir, job_id)
+            job_store.clear_pending_mirror(media_dir, job_id)
+            publish_status.clear_inflight(media_dir, job_id)
+            return {"results": results, "status_query": entry["status_query"]}
+
+        # Sorgu yayınlandığını doğrulamadı (kimlik yok, hâlâ işliyor veya
+        # sorgulanamıyor): belirsizlik sürüyor, retry sunmuyoruz.
         log_event(job_id, "publish_outcome_unknown", total=len(results))
         job_store.mark_failed(media_dir, job_id, "publish_outcome_unknown")
         job_store.clear_pending_mirror(media_dir, job_id)
@@ -736,6 +789,7 @@ def _publish_claimed(payload: dict, kind: str, job_id: str, media_dir: Path) -> 
         # (set above) so has_blocking_job does not 409 forever after success.
         job_store.mark_done(media_dir, job_id)
         job_store.clear_pending_mirror(media_dir, job_id)
+        publish_status.clear_inflight(media_dir, job_id)
         success_count = sum(1 for r in results if r["status"] == "success")
         log_event(job_id, "publish_complete", success_count=success_count, total=len(results))
         return {"results": results}

@@ -692,12 +692,13 @@ Faz 0'ın P0 çekirdeği uygulandı ve doğrulandı.
 | 20 | Dış ağ engellendi, `session` retry politikası testlerde sıfırlandı | `tests/conftest.py` | **203 dış bağlantı → 0**; paket 72 sn → **50 sn**; `.env` yokken de 646 passed |
 | 21 | Yayın kaydı `job_id` + `approved_sha256` taşıyor; manifest okuyucusu ve `provenance.trace_publication` eklendi | `app/publish_log.py`, `app/provenance.py` (yeni), `app/documentary_v2/telemetry.py`, `app/main.py`, `app/analytics.py` | "Bu yayın hangi işin/manifestin/onayın ürünü?" **artık cevaplanıyor** (`trace.complete=True`); manifest okuyan tüketici 0 → 1 |
 | 22 | Yayın öncesi teknik kalite kapısı (süre/ses akışı/ortalama seviye) | `app/publish_quality.py` (yeni), `app/errors.py`, `app/main.py`, `app/telegram_bot.py` | Sessiz/boş/çok kısa video **yayınlanamıyor** (ölçüm: sessiz -91 dB → red, sesli -21 dB → geçti); reddedilen dosya claim'i tüketmiyor; Telegram'da retry butonu sunulmuyor |
+| 23 | Timeout sonrası gerçek durum sorgusu: `inflight` kimlik kaydı + TikTok/YouTube API | `app/publish_status.py` (yeni), `app/publishers/publication_status.py` (yeni), `app/publishers/{tiktok,youtube}.py`, `app/main.py` | Sorgu "yayınlandı" derse iş **`done`** olur (`publish_recovered_after_timeout`) — körlemesine retry riski kalktı; token diske yazılmıyor |
 
 ### Ölçülen sonuç
 
 | Metrik | Önce | Sonra |
 |---|---|---|
-| Tam paket | **tamamlanamıyordu** (4 dosya askıda) | **668 passed, 3 skipped, 0 failed** |
+| Tam paket | **tamamlanamıyordu** (4 dosya askıda) | **708 passed, 3 skipped, 0 failed** |
 | Süre | belirsiz (askı) | **50 sn** (dış ağ engeli + retry kapalı) |
 | Başarısız test | 5 | **0** |
 
@@ -861,7 +862,8 @@ Askı sanılan şey aslında **gerçek ağ retry'ı**ydı: `.env` içindeki `DIR
 - `video-worker/video-output/*` üretilmiş artefaktları ve `_tmp_*` scratch dizinleri (bilinçli olarak commit edilmedi)
 - Faz 1'in geri kalanı (ortak job state machine, ayarlanabilir artefakt manifesti versiyonlama)
 - Teknik kalite kapısının kalan boyutları: altyazı zamanlaması/satır kuralları, clipping, ani seviye sıçraması, `loudnorm` hedefi doğrulaması (şu an süre + ses akışı + ortalama seviye kontrol ediliyor)
-- Yayın sonucu bilinmeyen işler için **otomatik** durum sorgulaması (`get_publication_status` adaptörlerde yok; operatör kararı bekliyor)
+- Yayın sonucu bilinmeyen işler için durum sorgusu yalnızca **TikTok ve YouTube**'da var; X/LinkedIn/Pinterest/Instagram/Facebook yükleme anında kimlik üretmediği için desteklenmiyor
+- YouTube'da `video_id` ancak yükleme yanıtıyla geliyor: read-timeout daha erken oluşursa kimlik yok (kodda belgelendi)
 - Zombi upload thread'leri için süreç düzeyinde izolasyon (`shutdown(wait=False)` artık beklemiyor; thread'ler süreç bitene kadar yaşayabilir)
 - `jsonstore` kilidi yalnızca **süreç-içi**; birden çok video-worker replikası çalışırsa dosya düzeyinde kilit gerekir
 - `jobs.py` `write_pending_mirror` hâlâ düz `write_text` ile yazıyor (atomik değil); okuma tarafı artık SQLite'ı tercih ettiği için pratikte yarım dosya okunmuyor ama dosya düzeyinde garanti yok
@@ -944,6 +946,27 @@ Kritik sıra detayı: kapı `claim_for_publish`'ten **önce** çalışıyor. Aks
 HTTP karşılığı **422** (409 değil): dosya var ve onaylı, ama yayınlanabilir değil. Retry aynı dosyayla aynı sonucu verir; operatör yeniden üretmeli. Görsel kartlar kapıyı atlıyor — onlarda ses akışı beklenmiyor.
 
 Telegram tarafı da bağlandı: `QualityGateError` yakalanmazsa operatör ham bir hata görürdü. Artık ret nedeni Türkçe okunur metne çevriliyor ("ses tamamen sessiz", "video çok kısa"…) ve **retry butonu sunulmuyor** — aynı dosyayı tekrar göndermek aynı sonucu verir, buton operatörü sonsuz döngüye sokardı.
+
+### Timeout sonrası durum sorgusu (madde 23)
+
+Yol haritası kuralı (Faz 4): *"Timeout sonrasında körlemesine yeniden yayın yerine **önce durum sorgulama**."* Ölçtüm: bu kural **uygulanamıyordu** — hiçbir yayıncıda durum sorgulayan fonksiyon yoktu. `status="unknown"` tek savunmaydı: retry butonu sunmuyorduk (doğru) ama işi kurtarmak için de hiçbir şey yapamıyorduk; operatör platformu elle kontrol etmek zorundaydı.
+
+Kök neden bir **zamanlama** sorunuydu: platform kimliği (`tiktok` → `publish_id`, `youtube` → `video_id`) ancak `upload_to_*` döndüğünde elimize geçiyordu. Timeout tam yükleme sırasında oluştuğu için kimlik kayıptı. TikTok'ta `publish_id` **büyük gövde yüklenmeden önce** alınıyor — kritik detay bu.
+
+Üç parçalı çözüm:
+
+1. **`inflight` kaydı** (`app/publish_status.py`) — yayıncı kimliği üretilir üretilmez `media/inflight/<job_id>.json` dosyasına yazılıyor. Thread takılsa bile çağıran taraf sorgulayabilir.
+2. **`PublishStatus`** — platformdan bağımsız normalize durum: `published` / `pending` / `failed` / `unknown`. `unknown` bilinçli olarak `published`dan ayrı, çünkü ikisi aynı operatör kararını gerektirmiyor.
+3. **Gerçek API sorguları** (`app/publishers/publication_status.py`) — resmî dokümantasyondan doğrulandı:
+   - TikTok `POST /v2/post/publish/status/fetch/` (`publish_id` gövdede) → `PUBLISH_COMPLETE` / `FAILED` + `fail_reason` / `PROCESSING_*`
+   - YouTube `GET /youtube/v3/videos?part=status,processingDetails&id=...` → `uploadStatus` + `processingStatus`
+
+`_run_publish`'in timeout dalı artık **gerçekten soruyor**: sorgu `published` derse iş `done` olur ve `publish_recovered_after_timeout` loglanır — bu bir **başarıdır**, hata değil. Retry sunmak operatörü aynı videoyu ikinci kez yayınlamaya iterdi. Sorgu doğrulayamazsa belirsizlik sürer ve retry yine sunulmaz.
+
+Bilinçli sınırlar:
+- **X, LinkedIn, Pinterest, Instagram, Facebook** desteklenmiyor: yükleme anında hiçbir kimlik bilinmiyor. Sorgu uydurmak yerine açıkça `unknown` diyoruz.
+- **YouTube'da kimlik geç geliyor**: `video_id` yalnızca yükleme yanıtıyla gelir. Yükleme tamamlanıp yanıt gecikirse kayıt kurtarır; read-timeout daha erken oluşursa kimlik hiç yoktur. Bu sınır kodda belgelendi.
+- **Erişim token'ı diske yazılmıyor**: `inflight` dosyası `media/` altında düz JSON; token oraya sızar ve secret scan'in kapsamı dışında kalırdı. Token sorgu anında canlı yenileniyor. Bunu bir test kilitliyor (`test_inflight_never_persists_access_token`) — ilk tasarımımda token yazılıyordu, kendi testim yakaladı.
 
 ### Commit geçmişi
 

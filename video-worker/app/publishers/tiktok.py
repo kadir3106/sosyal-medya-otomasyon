@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 from pathlib import Path
+from typing import Callable
 
 import requests
 
@@ -16,6 +17,7 @@ def upload_to_tiktok(
     client_secret: str,
     token_path: str,
     audited: bool = False,
+    on_inflight: Callable[[dict], None] | None = None,
 ) -> dict:
     try:
         access_token = _refresh_access_token(client_key, client_secret, token_path)
@@ -49,6 +51,16 @@ def upload_to_tiktok(
         init_data = init_response.json()["data"]
         publish_id = init_data["publish_id"]
         upload_url = init_data["upload_url"]
+
+        # `publish_id` burada, yani büyük gövde yüklenmeden ÖNCE elimizde.
+        # Yükleme 600 sn sürebiliyor ve timeout tam bu arada oluşuyor; kimlik
+        # diske yazılmazsa sonradan durum sorgulanamaz (tek kurtarma yolu bu).
+        # Erişim token'ı bilinçli olarak verilmiyor: diske sır yazılmamalı.
+        if on_inflight is not None:
+            try:
+                on_inflight({"publish_id": publish_id})
+            except Exception:
+                pass  # kimlik kaydı yayını asla engellememeli
 
         with open(video_path, "rb") as video_file:
             video_bytes = video_file.read()

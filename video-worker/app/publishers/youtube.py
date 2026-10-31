@@ -1,4 +1,5 @@
 import os
+from typing import Callable
 
 from app.http_client import session
 
@@ -21,6 +22,7 @@ def upload_to_youtube(
     thumbnail_path: str = "",
     privacy_status: str | None = None,
     pinned_comment: str = "",
+    on_inflight: Callable[[dict], None] | None = None,
 ) -> dict:
     try:
         if privacy_status is not None:
@@ -65,6 +67,16 @@ def upload_to_youtube(
             )
         upload_response.raise_for_status()
         video_id = upload_response.json()["id"]
+
+        # YouTube'da `video_id` yalnızca yükleme yanıtıyla gelir, yani read
+        # timeout'u bu satırdan önce oluşursa kimlik hiç elimizde olmaz. Yine de
+        # yükleme tamamlanıp yanıt geciktiyse bu kayıt kurtarma sağlar. Kimliğin
+        # önceden üretilememesi bilinen bir sınır (bkz. publish_status.py).
+        if on_inflight is not None:
+            try:
+                on_inflight({"video_id": video_id})
+            except Exception:
+                pass
 
         result = {
             "platform": "youtube",
