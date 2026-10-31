@@ -134,10 +134,19 @@ def test_crashed_publish_does_not_lock_generate_forever(tmp_path, monkeypatch):
     def boom(*args, **kwargs):
         raise RuntimeError("disk on fire")
 
-    monkeypatch.setattr(main_mod, "upload_to_youtube", boom)
-    monkeypatch.setattr(main_mod, "upload_to_tiktok", boom)
-    monkeypatch.setattr(main_mod, "upload_to_instagram", boom)
-    monkeypatch.setattr(main_mod, "upload_to_facebook", boom)
+    # Koşullu platformlar (threads/x/pinterest) dahil HEPSİ: .env'de kimlik varsa
+    # sahtelenmemiş yayıncı gerçek API'ye gider (ölçüldü: bu test 8 ağ denemesi
+    # yapıyordu).
+    for name in (
+        "upload_to_youtube",
+        "upload_to_tiktok",
+        "upload_to_instagram",
+        "upload_to_facebook",
+        "upload_to_threads",
+        "upload_video_to_x",
+        "upload_to_pinterest",
+    ):
+        monkeypatch.setattr(main_mod, name, boom)
     # ThreadPoolExecutor istisnaları sonuç sözlüğüne çeviriyor; bu yüzden
     # log/append aşamasında patlatıyoruz — yani gerçekten "beklenmeyen" bir yol.
     monkeypatch.setattr(
