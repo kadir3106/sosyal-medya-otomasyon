@@ -187,7 +187,12 @@ def format_approval_caption(result: dict) -> str:
 
 async def generate_video(job_id: str, topic: str | None = None) -> dict:
     """Async entrypoint — offloads the blocking pipeline so the event loop
-    (Telegram poller, health, digest) stays responsive during Kling/FFmpeg."""
+    (Telegram poller, health, digest) stays responsive during Kling/FFmpeg.
+
+    The caller must have already claimed `job_id` via `job_store.claim_new_job`;
+    the pipeline no longer creates the row itself, so the guard and the row are
+    one atomic step instead of two (`/generate` awaits this, freeing the loop).
+    """
     return await asyncio.to_thread(_generate_video_sync, job_id, topic)
 
 
@@ -221,9 +226,6 @@ def _generate_video_sync(job_id: str, topic: str | None = None) -> dict:
         )
         log_event(job_id, "pipeline_mode", **_pm)
 
-        job_store.create_job(
-            media_dir, job_id, kind="video", state="generating", topic=topic
-        )
         if from_pool:
             topic = select_next_topic(topics_path, state_path)
             job_store.update_job(media_dir, job_id, topic=topic)

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -46,6 +47,21 @@ def _db_path(media_dir: str | Path) -> Path:
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def new_job_id(now: datetime | None = None) -> str:
+    """Saniye damgası + kısa rastgele sonek.
+
+    Yalnızca saniye çözünürlüğü kullanıldığında aynı saniyedeki iki istek aynı
+    kimliği alıyordu; bu da aynı `work_dir`'e yazıp ara dosyaları birbirinin
+    üzerine ezmek demekti. Ölçüm: iki istek de `20261031-070512` aldı, jobs
+    tablosunda tek satır kaldı.
+
+    Sonek 6 hex karakter: biçim `20261031-070512-a1b2c3`. Telegram
+    `callback_data` sınırı 64 bayt — bu biçim 21 bayt, bolca yer var.
+    """
+    stamp = (now or datetime.now(timezone.utc)).strftime("%Y%m%d-%H%M%S")
+    return f"{stamp}-{uuid.uuid4().hex[:6]}"
 
 
 @contextmanager
@@ -223,6 +239,50 @@ def clear_awaiting(media_dir: str | Path, job_id: str | None = None) -> None:
                 f"UPDATE jobs SET state='done', updated_at=? WHERE state IN ({placeholders})",
                 (_utc_now(), *clearable),
             )
+
+
+def claim_new_job(
+    media_dir: str | Path,
+    *,
+    kind: str = "video",
+    topic: str | None = None,
+    now: datetime | None = None,
+) -> str | None:
+    """Yeni iş için üretim hakkını ATOMİK olarak alır; alınamazsa None.
+
+    `/generate` ve `/generate-image` guard'ı (`pending.json` + `has_blocking_job`)
+    ile `create_job` arasında `await` var: event loop serbest kalıyor, ikinci
+    istek guard'ı geçip ikinci bir üretim başlatıyordu. Ölçüm: iki eşzamanlı
+    `/generate` isteği de 200 aldı ve `generate_video` 2 kez çağrıldı.
+
+    Guard'ı tek bir koşullu INSERT'e indiriyoruz: SQLite'ın yazma kilidi
+    denetle-ve-yaz'ı atomik yapıyor, ayrı bir kilit defteri gerekmiyor.
+    `publishing` durumu da engelliyor — yayın sürerken yeni video üretmek
+    aynı anda iki videoyu yayına hazırlamak olur.
+
+    `pending.json` ayrıca kontrol ediliyor: eski/curl ve yalnızca-görsel akışlar
+    DB satırı oluşturmadan sadece bu dosyayı yazıyor, o yüzden DB sorgusu tek
+    başına onları görmüyor.
+    """
+    media = Path(media_dir)
+    if (media / "pending.json").is_file():
+        return None
+    job_id = new_job_id(now)
+    with _connect(media) as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO jobs (id, kind, state, topic, title, payload_json, error, created_at, updated_at)
+            SELECT ?, ?, 'generating', ?, NULL, '{}', NULL, ?, ?
+            WHERE NOT EXISTS (
+                SELECT 1 FROM jobs
+                WHERE state IN ('generating', 'awaiting_approval', 'publishing')
+            )
+            """,
+            (job_id, kind, topic, _utc_now(), _utc_now()),
+        )
+        if cur.rowcount:
+            return job_id
+    return None
 
 
 def write_pending_mirror(media_dir: str | Path, payload: dict[str, Any]) -> None:

@@ -61,8 +61,13 @@ def _is_configured(val) -> bool:
 
 
 def _run_generate_sync(topic: str | None = None):
-    job_id = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    mark_run_today(str(Path(config.MEDIA_DIR) / "last_video_run.txt"))
+    media_dir = Path(config.MEDIA_DIR)
+    # Telegram "tekrar dene" ve açılış yakalama buraya geliyor; guard'sız
+    # bırakılırsa zamanlanmış bir üretimin üstüne ikinci bir üretim biner.
+    job_id = job_store.claim_new_job(media_dir, kind="video", topic=topic)
+    if job_id is None:
+        raise RuntimeError("A generation is already in progress — refusing to start another one.")
+    mark_run_today(str(media_dir / "last_video_run.txt"))
     return _generate_video_sync(job_id, topic=topic)
 
 
@@ -254,22 +259,36 @@ def discover_ideas():
     return {"status": "ok", "pitches": pitches}
 
 
+def _conflict_detail(media_dir: Path) -> str:
+    """409 gövdesini gerçek duruma göre ayırır.
+
+    `has_blocking_job` hem `generating` hem `awaiting_approval` için True dönüyor;
+    ikisine aynı "Telegram'dan çöz" mesajını vermek operatörü var olmayan bir
+    onaya yönlendiriyordu.
+    """
+    if (media_dir / "pending.json").is_file() or job_store.get_awaiting_approval(media_dir):
+        return (
+            "A video is already pending approval — resolve it via "
+            "Telegram before generating a new one."
+        )
+    return "A generation is already in progress — try again shortly."
+
+
 @app.post("/generate")
 async def generate(req: GenerateRequest | None = None):
     media_dir = Path(config.MEDIA_DIR)
-    pending_path = media_dir / "pending.json"
-    if pending_path.is_file() or job_store.has_blocking_job(media_dir):
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "A video is already pending approval — resolve it via "
-                "Telegram before generating a new one."
-            ),
-        )
+    topic = req.topic if req else None
+
+    # Guard + job creation must be ONE atomic step: this endpoint awaits
+    # generate_video, which hands the work to a thread and frees the event loop.
+    # A separate check-then-create let a second request pass the guard and start
+    # a second pipeline (measured: two concurrent POSTs, both 200, pipeline ran
+    # twice). claim_new_job is a single conditional INSERT, so only one wins.
+    job_id = job_store.claim_new_job(media_dir, kind="video", topic=topic)
+    if job_id is None:
+        raise HTTPException(status_code=409, detail=_conflict_detail(media_dir))
 
     mark_run_today(str(media_dir / "last_video_run.txt"))
-    job_id = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    topic = req.topic if req else None
     try:
         return await generate_video(job_id, topic=topic)
     except Exception as exc:
@@ -297,25 +316,27 @@ async def render_remotion_endpoint(req: RemotionRequest | None = None):
 @app.post("/generate-image")
 async def generate_image():
     media_dir = Path(config.MEDIA_DIR)
-    pending_path = media_dir / "pending.json"
-    if pending_path.is_file() or job_store.has_blocking_job(media_dir):
-        raise HTTPException(
-            status_code=409,
-            detail=(
+    state_path = str(media_dir / "used_image_topics.json")
+
+    # Same TOCTOU guard as /generate. This body has no real `await` today, so the
+    # event loop happens to serialise it (measured: 0 concurrent invocations), but
+    # the check-then-create shape is identical and must not depend on that.
+    job_id = job_store.claim_new_job(media_dir, kind="image")
+    if job_id is None:
+        if (media_dir / "pending.json").is_file() or job_store.get_awaiting_approval(media_dir):
+            detail = (
                 "A job is already pending approval — resolve it via "
                 "Telegram before generating a new one."
-            ),
-        )
+            )
+        else:
+            detail = "A generation is already in progress — try again shortly."
+        raise HTTPException(status_code=409, detail=detail)
 
     mark_run_today(str(media_dir / "last_image_run.txt"))
-    job_id = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    state_path = str(media_dir / "used_image_topics.json")
     topic = None
     try:
         topic = select_next_topic(config.IMAGE_TOPICS_PATH, state_path)
-        job_store.create_job(
-            media_dir, job_id, kind="image", state="generating", topic=topic
-        )
+        job_store.update_job(media_dir, job_id, topic=topic)
         content = generate_image_content(topic, api_key=config.OPENROUTER_API_KEY)
 
         image_filename = f"{job_id}.png"

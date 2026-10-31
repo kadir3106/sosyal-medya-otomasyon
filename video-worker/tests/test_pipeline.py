@@ -381,6 +381,10 @@ async def test_generate_video_hard_fails_on_kling_auth_billing(
         mock_config.IMAGE_BRAND_NAME = "KALI"
         mock_config.IMAGE_ACCENT = "#38BDF8"
 
+        # The caller claims the job before handing it to the pipeline (the guard
+        # and the row are one atomic step); the pipeline no longer creates it.
+        job_store.create_job(tmp_path, "job_kling_403", kind="video", state="generating")
+
         with pytest.raises(KlingAuthBillingError):
             await generate_video("job_kling_403")
 
