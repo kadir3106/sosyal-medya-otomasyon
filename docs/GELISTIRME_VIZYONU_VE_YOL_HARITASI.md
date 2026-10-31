@@ -689,13 +689,14 @@ Faz 0'ın P0 çekirdeği uygulandı ve doğrulandı.
 | 17 | `/publish`'in bilinmeyen-iş dalı atomik yapıldı (koşullu INSERT) | `app/jobs.py`, `app/main.py`, `tests/test_publish_concurrency.py` (yeni) | Legacy/görsel iş **iki kez kamuya açık yayınlanamıyor** (ölçüm: 2 yayın/8 yükleme → 1 yayın/4 yükleme) |
 | 18 | Eşzamanlı silmede geçici `WinError 5` yeniden deneniyor | `app/main.py`, `tests/test_publish_concurrency.py` | Paralel `/cleanup` **500 dönmüyor** (ölçüm: 8 thread'de 20/20 → 0/20) |
 | 19 | Kapı testi `frozenset` sırasına bağımlı olmaktan çıkarıldı | `tests/test_director_gate_regression.py` | Test **hash seed'e göre dalgalanmıyor** (ölçüm: 6 farklı sıralama → 30 seed'de 0 hata) |
+| 20 | Dış ağ engellendi, `session` retry politikası testlerde sıfırlandı | `tests/conftest.py` | **203 dış bağlantı → 0**; paket 72 sn → **50 sn**; `.env` yokken de 646 passed |
 
 ### Ölçülen sonuç
 
 | Metrik | Önce | Sonra |
 |---|---|---|
 | Tam paket | **tamamlanamıyordu** (4 dosya askıda) | **646 passed, 3 skipped, 0 failed** |
-| Süre | belirsiz (askı) | **110 sn** |
+| Süre | belirsiz (askı) | **50 sn** (dış ağ engeli + retry kapalı) |
 | Başarısız test | 5 | **0** |
 
 ### Konu seçimi yarışı (madde 15)
@@ -854,7 +855,7 @@ Askı sanılan şey aslında **gerçek ağ retry'ı**ydı: `.env` içindeki `DIR
 - Lint (bilinçli olarak atlandı: kod tabanında lint baseline yok, varsayılan ruff/flake8 ilk koşuda kırmızı olur ve CI'ı görmezden gelmeye alıştırır)
 - Playwright kararı → **verildi**: CI'a eklenmedi, host-only kaldı (hiçbir test `tiktok_browser`'ı import etmiyor)
 - `pytest-timeout` ile per-test timeout (yeni bağımlılık gerektiriyor)
-- Push (13 commit lokal `cursor/hybrid-flux-architecture` dalında)
+- Push (41 commit lokal `cursor/hybrid-flux-architecture` dalında)
 - `video-worker/video-output/*` üretilmiş artefaktları ve `_tmp_*` scratch dizinleri (bilinçli olarak commit edilmedi)
 - Faz 1'in geri kalanı (ContentJob artefakt manifesti, publication durum sorgulama, kalite kapıları)
 - Zombi upload thread'leri için süreç düzeyinde izolasyon (`shutdown(wait=False)` artık beklemiyor; thread'ler süreç bitene kadar yaşayabilir)
@@ -916,6 +917,8 @@ Sonuç: **646 passed, 3 skipped, 50 sn** (sızıntılı 72 sn, engelli ama retry
 | `77f1c51` | Unlink retry + çökme bırakma testleri (1 dosya) |
 | `3181eb7` | Kapı testi `frozenset` sırasına bağımlı olmaktan çıkarıldı (1 dosya) |
 | `08ae6e1` | Dış ağ engeli + test retry politikası sıfırlandı; paket 50 sn (2 dosya) |
+| `3fa5e80` | Bu belgeye madde 20 (dış ağ sızıntısı) |
+| `d9317c1` | CI yorumundaki doğrulanmış test sayısı güncellendi (1 dosya) |
 
 > Bu belgeyi güncelleyen commit ayrıca `docs:` önekiyle geçmişte bulunabilir (kendi hash'ini içeremez).
 
