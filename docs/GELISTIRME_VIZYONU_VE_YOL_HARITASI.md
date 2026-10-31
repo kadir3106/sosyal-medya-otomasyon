@@ -685,13 +685,14 @@ Faz 0'ın P0 çekirdeği uygulandı ve doğrulandı.
 | 13 | Fan-out bütçesi yayıncı timeout'larıyla hizalandı (300 → 660 sn) | `app/main.py` | 600 sn süren YouTube/TikTok/Meta yüklemeleri artık **ortasında kesilmiyor** |
 | 14 | `append_publish_log` kilitlendi + atomik yazıyor | `app/publish_log.py` | Eşzamanlı yayın kayıtları kaybolmuyor (ölçüm: 40 kayıttan **35'i kayıptı**) |
 | 15 | Konu seçimi kilitlendi; desen paylaşılan `jsonstore`'a çıkarıldı | `app/jsonstore.py` (yeni), `app/topics.py`, `app/publish_log.py` | Eşzamanlı seçim **aynı konuyu tekrar dağıtmıyor** (ölçüm: 40 çağrıda 3 farklı konu, **30 tekrar**) |
+| 16 | `/generate` guard'ı + iş kaydı tek atomik adım; `job_id` benzersiz | `app/jobs.py`, `app/main.py`, `app/pipeline.py` | İki eşzamanlı istek **tek üretim** başlatıyor (ölçüm: `[200,200]`/2 çağrı → `[200,409]`/1 çağrı) |
 
 ### Ölçülen sonuç
 
 | Metrik | Önce | Sonra |
 |---|---|---|
-| Tam paket | **tamamlanamıyordu** (4 dosya askıda) | **631 passed, 3 skipped, 0 failed** |
-| Süre | belirsiz (askı) | **73 sn** |
+| Tam paket | **tamamlanamıyordu** (4 dosya askıda) | **640 passed, 3 skipped, 0 failed** |
+| Süre | belirsiz (askı) | **110 sn** |
 | Başarısız test | 5 | **0** |
 
 ### Konu seçimi yarışı (madde 15)
@@ -713,6 +714,32 @@ Aynı desen iki modülde görüldüğü için kopyalamak yerine paylaşılan `ap
 - `write_atomic`: aynı dizine geçici dosya + `os.replace`; hata durumunda geçici dosya temizleniyor
 - `read_json`: bozuk dosyayı `<ad>.corrupt` olarak kenara alıp temiz başlıyor
 - Kilit **süreç-içi**; `video-worker` tek replika çalıştığı için yeterli
+
+### Üretim guard'ı yarışı (madde 16)
+
+`/generate` guard'ı (`pending.json` + `has_blocking_job`) ile `create_job` **iki ayrı adımdı** — arada `await generate_video` var, o da işi `asyncio.to_thread`'e devredip event loop'u serbest bırakıyor. Ölçüm:
+
+```
+/generate  codes=[200, 200] invocations=2 RACE=True     ← iki istek de geçti
+```
+
+`delay=0` ile de tekrarlanıyor; yani yavaş bir LLM çağrısına ihtiyaç yok, pencere **yapısal**. Ayrıca `job_id` saniye çözünürlüğündeydi:
+
+```
+ids: ['20261031-070512', '20261031-070512']   collision: True
+distinct work dirs: 1                          ← iki pipeline aynı dizine yazıyor
+rows in jobs table: 1 (expected 2)             ← bir iş tamamen kayıp
+```
+
+İki video üretiliyor, ara dosyalar birbirini eziyor, tek satır kalıyor.
+
+Düzeltme: `job_store.claim_new_job()` guard'ı ve INSERT'i **tek koşullu `INSERT ... SELECT ... WHERE NOT EXISTS`** yapıyor; SQLite'ın yazma kilidi denetle-ve-yaz'ı atomik kılıyor. `/generate`, `/generate-image` ve `_run_generate_sync` (Telegram "tekrar dene" + açılış yakalama) önce talep ediyor, `job_id`'yi aşağı geçiriyor. `new_job_id()` 6 hex sonek ekliyor (`20261031-070512-a1b2c3`, 21 bayt — Telegram'ın 64 baytlık `callback_data` sınırına rahat sığar).
+
+Düzeltmeden sonra: `/generate` → `[200, 409]`, tek çağrı; 10 eşzamanlı talep → tam 1 kazanan, 1 satır.
+
+Yan bulgu: `has_blocking_job` `generating` için de True olduğundan, hâlâ üretim yapan bir iş için operatöre "Telegram'dan onayı çöz" deniyordu — var olmayan bir onaya yönlendirme. `_conflict_detail` artık `get_awaiting_approval`/`pending.json` üzerinden ayırıyor.
+
+Not: `claim_new_job` içindeki `pending.json` kontrolü atomik INSERT'in dışında. Legacy/curl akışı DB satırı oluşturmadan yalnızca bu dosyayı yazdığı için kontrol kaldırılamaz — iki mevcut test bunu yakaladı. Dosya tarafı atomik değil, DB tarafı atomik.
 
 ### Yayın kaydı yarışı (madde 14)
 
@@ -812,12 +839,13 @@ Askı sanılan şey aslında **gerçek ağ retry'ı**ydı: `.env` içindeki `DIR
 - Lint (bilinçli olarak atlandı: kod tabanında lint baseline yok, varsayılan ruff/flake8 ilk koşuda kırmızı olur ve CI'ı görmezden gelmeye alıştırır)
 - Playwright kararı → **verildi**: CI'a eklenmedi, host-only kaldı (hiçbir test `tiktok_browser`'ı import etmiyor)
 - `pytest-timeout` ile per-test timeout (yeni bağımlılık gerektiriyor)
-- Push (12 commit lokal `cursor/hybrid-flux-architecture` dalında)
+- Push (13 commit lokal `cursor/hybrid-flux-architecture` dalında)
 - `video-worker/video-output/*` üretilmiş artefaktları ve `_tmp_*` scratch dizinleri (bilinçli olarak commit edilmedi)
 - Faz 1'in geri kalanı (ContentJob artefakt manifesti, publication durum sorgulama, kalite kapıları)
 - Zombi upload thread'leri için süreç düzeyinde izolasyon (`shutdown(wait=False)` artık beklemiyor; thread'ler süreç bitene kadar yaşayabilir)
 - `jsonstore` kilidi yalnızca **süreç-içi**; birden çok video-worker replikası çalışırsa dosya düzeyinde kilit gerekir
-- `jobs.py` SQLite kullanıyor ama `write_pending_mirror` düz `write_text` ile yazıyor (atomik değil, kilitli değil)
+- `jobs.py` `write_pending_mirror` hâlâ düz `write_text` ile yazıyor (atomik değil); okuma tarafı artık SQLite'ı tercih ettiği için pratikte yarım dosya okunmuyor ama dosya düzeyinde garanti yok
+- `claim_new_job` içindeki `pending.json` kontrolü atomik INSERT'in **dışında** — DB tarafı atomik, dosya tarafı değil (legacy akış yalnızca kendi yazarıyla yarışabilir)
 
 ### Commit geçmişi
 
@@ -835,6 +863,7 @@ Askı sanılan şey aslında **gerçek ağ retry'ı**ydı: `.env` içindeki `DIR
 | `efa6e56` | Bütçe yayıncı timeout'larıyla hizalandı + sözleşme testi (2 dosya) |
 | `52a0f85` | `append_publish_log` kilit + atomik yazma (2 dosya) |
 | `7edd883` | Konu seçimi kilidi + paylaşılan `jsonstore` (5 dosya) |
+| `417863f` | `/generate` guard'ı atomik; ikinci eşzamanlı üretim engellendi (5 dosya) |
 
 > Bu belgeyi güncelleyen commit ayrıca `docs:` önekiyle geçmişte bulunabilir (kendi hash'ini içeremez).
 
