@@ -694,12 +694,12 @@ def _publish_claimed(payload: dict, kind: str, job_id: str, media_dir: Path) -> 
         raise PublishOutcomeUnknownError(job_id, results)
 
     if any_success:
-        Path(cleanup_path).unlink(missing_ok=True)
+        _unlink_quietly(Path(cleanup_path))
         for extra in cleanup_extra:
-            Path(extra).unlink(missing_ok=True)
+            _unlink_quietly(Path(extra))
         thumbnail_path = payload.get("thumbnail_path")
         if thumbnail_path:
-            Path(thumbnail_path).unlink(missing_ok=True)
+            _unlink_quietly(Path(thumbnail_path))
         # mark_done + clear mirror: clear_awaiting alone must cover publishing
         # (set above) so has_blocking_job does not 409 forever after success.
         job_store.mark_done(media_dir, job_id)
@@ -732,16 +732,43 @@ def _publish_claimed(payload: dict, kind: str, job_id: str, media_dir: Path) -> 
     raise AllPlatformsFailedError(job_id, results)
 
 
+def _unlink_quietly(path: Path, *, attempts: int = 5) -> None:
+    """Delete `path`, tolerating a concurrent delete by another request.
+
+    `unlink(missing_ok=True)` only swallows FileNotFoundError. On Windows the
+    losing thread of two simultaneous unlinks gets PermissionError (WinError 5)
+    while the winner still holds the handle, so concurrent /cleanup calls
+    returned 500 for one caller (measured, 8 threads: 20/20 trials raised).
+
+    Checking `path.exists()` after the error is not enough — it races the same
+    way and still raised in 1/10 trials. So retry briefly: the winner finishes
+    within microseconds and the retry then sees FileNotFoundError. A genuinely
+    stuck file (locked by another process) still raises after the last attempt.
+    """
+    delay = 0.01
+    for attempt in range(1, attempts + 1):
+        try:
+            path.unlink(missing_ok=True)
+            return
+        except FileNotFoundError:
+            return
+        except PermissionError:
+            if attempt == attempts:
+                raise
+            time.sleep(delay)
+            delay *= 2
+
+
 def _run_cleanup(filename: str) -> None:
     media_dir = Path(config.MEDIA_DIR)
     file_path = media_dir / filename
-    file_path.unlink(missing_ok=True)
+    _unlink_quietly(file_path)
     # Also drop split-screen sibling if present.
     pending = job_store.read_pending_payload(media_dir)
     if pending:
         split_name = pending.get("split_screen_filename")
         if split_name and split_name != filename:
-            (media_dir / split_name).unlink(missing_ok=True)
+            _unlink_quietly(media_dir / split_name)
         job_id = pending.get("job_id")
         if job_id:
             job_store.clear_awaiting(media_dir, job_id)
