@@ -294,6 +294,33 @@ def tracked_files() -> list[Path]:
     return [Path(p) for p in out.split("\0") if p]
 
 
+def scan_targets(root: Path | None = None) -> list[Path]:
+    """İzlenen + izlenmeyen ama ignore'lu olmayan dosyalar (`root`'a göre).
+
+    Neden `git ls-files` yetmiyor: yeni yazılmış (henüz commit edilmemiş) bir
+    dosya taranmıyordu. Ölçüldü — `test_secret_scan_history.py` içine sır
+    desenine uyan bir literal koydum, yerel tarama "Temiz" dedi, commit edip
+    CI'a gidince hem `test` hem `history-scan` kırıldı. Commit öncesi çalışan
+    bir kapı, commit'ten sonra ortaya çıkan bir hatayı yakalamıyorsa gereksizdir.
+
+    `root` zorunlu: `git` süreç cwd'sinde çalışır ama `main` dosyaları `root`
+    altından okur. İkisi ayrışırsa tarayıcı yanlış ağaca bakar — testte
+    `pytest` cwd'si `video-worker` olduğu için tam bu oldu.
+    """
+    out = subprocess.run(
+        ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+        capture_output=True, text=True, check=True,
+        cwd=str(root) if root is not None else None,
+    ).stdout
+    seen: list[Path] = []
+    for p in out.split("\0"):
+        if p:
+            candidate = Path(p)
+            if candidate not in seen:
+                seen.append(candidate)
+    return seen
+
+
 def scan_text_values(text: str) -> list[tuple[str, int, str, str]]:
     """(desen adı, satır, TAM değer, maskeli önek) dörtlüleri.
 
@@ -400,7 +427,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     findings: list[str] = []
-    for path in tracked_files():
+    targets = scan_targets(root)
+    for path in targets:
         rel = path.as_posix()
         if path.suffix.lower() in SKIP_SUFFIXES:
             continue
@@ -424,7 +452,7 @@ def main(argv: list[str] | None = None) -> int:
         for f in findings:
             print(f"  {f}")
         return 1
-    print(f"Temiz: {len(tracked_files())} izlenen dosyada sır deseni bulunamadı.")
+    print(f"Temiz: {len(targets)} dosyada sır deseni bulunamadı.")
     return 0
 
 

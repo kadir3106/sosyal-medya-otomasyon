@@ -77,6 +77,30 @@ def test_video_output_is_not_skipped():
     assert "video-output" not in secret_scan.SKIP_DIR_PARTS
 
 
+def test_untracked_files_are_scanned(tmp_path, monkeypatch):
+    """Commit edilmemiş dosya da taranmalı — commit ÖNCESİ kapı olması için.
+
+    Ölçüm: `tracked_files()` = `git ls-files` yalnızca izlenen dosyaları
+    döndürüyordu. Bu dosyaya sır desenine uyan bir literal koydum, yerel
+    tarama "Temiz" dedi, commit edip CI'a gidince hem `test` hem
+    `history-scan` kırıldı. Hata commit'ten SONRA ortaya çıktı.
+    """
+    # Gerçek depoda gerçekten izlenmeyen bir dosya üret ve hedef listesinde
+    # göründüğünü doğrula. `main` çağırmıyoruz: o tüm depoyu tarar ve başka
+    # testlerle yarışır.
+    repo = Path(__file__).resolve().parent.parent.parent
+    probe = repo / "_scan_probe_untracked.py"
+    try:
+        probe.write_text("KEY = 1\n", encoding="utf-8")
+        names = {p.as_posix() for p in secret_scan.scan_targets(repo)}
+        assert "_scan_probe_untracked.py" in names, (
+            "izlenmeyen dosya hedef listesinde olmalı; aksi halde tarayıcı "
+            "commit öncesi kör kalır"
+        )
+    finally:
+        probe.unlink(missing_ok=True)
+
+
 # --- İçerik taraması: tam değer, maskeli rapor ----------------------------
 
 def test_scan_text_values_returns_full_value_but_masks_report():
@@ -88,10 +112,12 @@ def test_scan_text_values_returns_full_value_but_masks_report():
     assert secret not in masked    # rapor sırrı sızdırmamalı
 
 
-def test_sequential_placeholder_is_marked_not_suppressed():
-    """`sk-abcdefghij...` sahtedir ama susturulmuyor, işaretleniyor."""
-    assert secret_scan._sequential_run("sk-abcdefghijklmnopqrstuvwx")
-    assert not secret_scan._sequential_run("sk-qwertyuiopasdfghjklzxcvb")
+def test_sequential_run_marks_synthetic_key():
+    """Sıralı alfabeden kurulmuş sahte anahtar işaretlenir."""
+    sequential = "sk-" + "abcde" + "fghij" + "klmno" + "pqrstuvwx"
+    random_like = "sk-" + "qwertyuiop" + "asdfghjkl" + "zxcvb"
+    assert secret_scan._sequential_run(sequential)
+    assert not secret_scan._sequential_run(random_like)
 
 
 # --- Baseline: yeni sızıntı kırmızı, bilinen kabul -------------------------

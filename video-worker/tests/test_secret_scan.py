@@ -89,7 +89,7 @@ def test_main_returns_nonzero_on_finding(tmp_path, monkeypatch):
     """`main` gerçekten 1 döndürmeli — CI adımı buna bakıyor."""
     import secret_scan
 
-    monkeypatch.setattr(secret_scan, "tracked_files", lambda: [Path("leak.py")])
+    monkeypatch.setattr(secret_scan, "scan_targets", lambda *a, **k: [Path("leak.py")])
     (tmp_path / "leak.py").write_text(f'KEY = "{_fake("sk-")}"', encoding="utf-8")
 
     assert scan_main([str(tmp_path)]) == 1
