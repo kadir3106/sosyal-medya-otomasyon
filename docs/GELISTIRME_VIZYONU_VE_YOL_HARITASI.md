@@ -1032,6 +1032,63 @@ Kapı listesi bilinçli olarak **dar**: yalnızca koşunun `FAILED tests/...` sa
 
 **Kalan gerçek risk (P0, kanıtlandı):** Git geçmişinde `video-output/tiktok_session/` altında **1015 dosya** var — `Login Data`, `Network/Cookies`, `Local State` dahil. `644196f` bunları ağaçtan temizledi ve `.gitignore` tekrarını engelliyor, ama **geçmişten silmedi**. Ayrıca bu dosyalar zaten `origin` geçmişinde de var (`b3d6b74` ile), yani push yeni bir sızıntı yaratmadı — mevcut olanı görünür kıldı. Yapılması gereken: TikTok oturum çerezlerini geçersiz kılmak (hesap şifresi değişimi / tüm cihazlardan çıkış), sonra geçmişi `git filter-repo` ile temizlemek. `backups/otomasyon-yedek-2026-09-05.tar.gz` de geçmişte ama içindeki `n8n-data.tar` tarandı: gömülü token bulunamadı.
 
+### 26. Sır tarayıcısı kördü: geçmişi hiç görmüyordu (2026-10-31)
+
+Madde 25 CI'ı yeşile çevirdikten sonra `secret-scan` işi "Temiz: 394 dosyada sır deseni bulunamadı" diyordu. Aynı anda geçmişte **1015 oturum dosyası** olduğu biliniyordu (madde 25'in P0'ı). İkisi birlikte doğru olamazdı — ölçtüm ve **üç ayrı körlük** buldum.
+
+| # | Körlük | Kanıt |
+|---|---|---|
+| 1 | Geçmiş hiç taranmıyor | `tracked_files()` = `git ls-files`, yani yalnızca çalışma ağacı |
+| 2 | `video-output` tamamen atlanıyor | `SKIP_DIR_PARTS` içindeydi; orada **88 izlenen dosya** var |
+| 3 | Oturum dosyaları regex'e görünmez | Chromium `Cookies`/`Login Data` **SQLite/ikili**; içerik deseni asla eşleşmez |
+
+Üçüncüsü en sinsi olanı: bu sınıf sızıntının tehlikesi içindeki `token="..."` metni değil, **dosyanın kendisidir**. Yani doğru dedektör içerik değil **yol** desenidir.
+
+**Düzeltme.** `scripts/secret_scan.py` iki mod kazandı. Ağaç modu (varsayılan) artık `video-output`'u atlamıyor ve yol desenlerini de uyguluyor. Yeni `--history` modu tüm ref'lerdeki blob'ları gezip iki dedektör sınıfı çalıştırıyor: 9 yol deseni (`browser_cookies`, `browser_login_data`, `browser_local_state`, `browser_profile_dir`, `ssh_private_key`, `key_material`, `session_state`, `dotenv`, `browser_web_data`) ve mevcut içerik desenleri.
+
+Maliyet ölçüldü, çünkü "geçmiş taraması yavaş olur" varsayımı CI'ı öldürürdü:
+
+| Ölçüm | Sonuç |
+|---|---|
+| `rev-list --all --objects` | **0,1 s** — 1774 tekil blob |
+| İçerik taraması (blob başına ayrı `git`) | dakikalar — **reddedildi** |
+| İçerik taraması (`cat-file --batch`, tek süreç) | **2,3 s** |
+
+**Rapor okunur kılınmak zorundaydı.** İlk sürüm 951 bulgu bastı: 940'ı aynı dizinin her dosyası, 7'si test fixture'ı. Operatör 940 satırı okuyamaz. Üç iyileştirme:
+- **Dizin tekilleştirme:** `browser_profile_dir` eşleşmesi bir kez raporlanır (`939 dosya içeriyor`), tek tek hassas dosyalar ayrıca kalır.
+- **Doğru bayrak:** ilk sürüm "dosya HEAD'de mi" diye bakıp 7 sahte fixture'ı `HEAD'de` işaretledi. Doğrusu **değerin** hâlâ orada olması; bayrak artık `HEAD'de` / `düzeltilmiş` / `sadece geçmişte`.
+- **Sahte işaretleme:** sıralı alfabe içeren değerler `muhtemelen sahte` etiketi alır — susturulmaz, işaretlenir.
+
+**Baseline: kullanışsız CI, olmayan CI'dır.** Geçmişteki sızıntı `git filter-repo` çalıştırılmadan silinemez; bu yüzden her koşuda kırmızı olurdu ve dünkü ffmpeg dersinin tekrarı olurdu. `scripts/secret_scan_baseline.json` bilinen bulguları kabul eder; **yeni** bulgu CI'ı kırar. Kabul listesi boşaltılabilir: geçmiş temizlendiğinde liste kendini yeniler.
+
+Baseline anahtarı üçüncü bir hata doğurdu: anahtar `(desen, dosya)` iken `test_secret_scan.py` içindeki **üç ayrı** OpenAI değeri tek anahtar üretti — aynı dosyaya yeni bir anahtar eklenirse baseline onu sessizce yutardı. Anahtar artık değerin kısa SHA-256 özetini taşıyor (geri döndürülemez, baseline sır sızdırmaz).
+
+**Uçtan uca kanıt (geçici depoda, gerçek geçmişe dokunmadan):**
+
+| Adım | Beklenen | Sonuç |
+|---|---|---|
+| Temiz depo | 0 | 0 ✅ |
+| Geçmişe `Cookies` + `Local State` ekle | 1 | 1 ✅ |
+| Baseline'a kaydet, tekrar tara | 0 | 0 ✅ |
+| İkinci, **farklı** sızıntı (`prod.env`) | 1 | 1 ✅ |
+| Kabul edilmiş `Cookies` gürültü yapıyor mu | hayır | hayır ✅ |
+| Dosyayı ağaçtan sil, geçmişte kalsın | 1 | 1 ✅ |
+
+Bu test **kendi hatamı yakaladı**: `dotenv` desenim `(^|/)\.env$` idi, yani yalnızca tam `.env`. `prod.env` kaçtı (çıkış 0). Desen `\.env$` oldu.
+
+**CI'ın en kritik satırı.** Yeni `history-scan` işi `actions/checkout` varsayılanıyla (shallow, derinlik 1) çalışsaydı tarama yalnızca son commit'i görür ve **her zaman "temiz" derdi** — yani düzelttiğim körlüğün birebir aynısı. Ölçtüm:
+
+| Klon | Görünen blob | Sonuç |
+|---|---|---|
+| shallow (`--depth 1`) | 429 | **0 bulgu** — kör |
+| tam | 1774 | **12 bulgu** — doğru |
+
+Bu yüzden `fetch-depth: 0` zorunlu ve `ci.yml`'de yorumuyla duruyor.
+
+**Sınırları (dürüst):** (a) Regex ve yol desenleri bilinen biçimleri yakalar; tanınmayan bir sır biçimi kaçar. (b) Baseline rotasyondan sonra da dolu kalırsa eski bulguları gizlemeye devam eder — bu yüzden `how_to_clear` alanı dosyanın içinde. (c) İkili dosyalarda içerik taranmaz (yalnızca yol); bu tasarım gereği.
+
+Sonuç: **749 passed, 3 skipped** (önceki 732 + 17 yeni), yerelde ve CI'da aynı.
+
 ### Commit geçmişi
 
 | Commit | İçerik |
@@ -1064,6 +1121,8 @@ Kapı listesi bilinçli olarak **dar**: yalnızca koşunun `FAILED tests/...` sa
 | `386eb3d` | Madde 23 ölçüm tablosu + commit günlüğü |
 | `5d79d43` | Analitik → üretim geri besleme döngüsü (madde 24, 4 yeni/6 dosya) |
 | `24cd5e0` | CI ffmpeg kurulumu + ffmpeg kapılı testler açık sebeple atlanıyor (madde 25) |
+| `cf03d0a` | Madde 25 ölçüm tablosu + CI yorumları güncel sayılarla |
+| `43064ca` | Lint temizliği: kullanılmayan import/değişken (CI yeşil #3) |
 
 > Bu belgeyi güncelleyen commit ayrıca `docs:` önekiyle geçmişte bulunabilir (kendi hash'ini içeremez).
 

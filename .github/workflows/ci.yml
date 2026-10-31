@@ -41,7 +41,7 @@ jobs:
         run: pytest tests -q
 
   secret-scan:
-    # Izlenen dosyalarda sır deseni arar. Yerelde 394 dosyada temiz ölçüldü;
+    # Izlenen dosyalarda sır deseni arar. Yerelde 396 dosyada temiz ölçüldü;
     # bu job GitHub runner'ında da temiz geçti (5 s).
     runs-on: ubuntu-latest
     steps:
@@ -53,3 +53,25 @@ jobs:
 
       - name: Scan tracked files for secrets
         run: python scripts/secret_scan.py .
+
+  history-scan:
+    # Neden ayrı job: `secret-scan` yalnızca `git ls-files` (çalışma ağacı) bakar.
+    # Ölçülen kör nokta: `video-output/tiktok_session/` altında 1015 dosya
+    # (Cookies, Login Data, Local State) git GEÇMİŞİNDE duruyordu ve tarayıcı
+    # "Temiz: 394 dosyada sır deseni bulunamadı" diyordu. Bir kez commit'lenen
+    # sır, dosya silinse bile geçmişte kalır (uçtan uca doğrulandı).
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth: 0 ZORUNLU. Varsayılan checkout shallow'dır (derinlik 1):
+      # tarama yalnızca son commit'i görür ve her zaman "temiz" derdi — yani
+      # geçmiş taraması hiçbir şey taramaz. Bu, düzeltilen körlüğün aynısıdır.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Scan git history for secrets and session files
+        run: python scripts/secret_scan.py --history
