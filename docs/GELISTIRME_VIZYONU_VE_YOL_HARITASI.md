@@ -1109,7 +1109,60 @@ Düzeltme: `scan_targets(root)` — `git ls-files --cached --others --exclude-st
 
 `history-scan` logunda **14 bulgu** görünmesi kritik: shallow klonda 0 görünüyordu. Yani `fetch-depth: 0` runner'da gerçekten yük taşıyor, tarama simüle edilmiyor.
 
-### Commit geçmişi
+### 27. İki sessiz çökme ve hiç olmayan lint kapısı (2026-10-31)
+
+Madde 26'yı bitirdikten sonra `ruff` ile depoyu taradım — ve **prod'da çalışmayan iki kod yolu** buldum. İkisi de `SyntaxError` değil, yani `pytest` toplama aşaması onları görmedi; ikisi de yalnızca belirli bir kullanıcı eyleminde tetikleniyordu.
+
+**Çökme 1 — `scripts/daily_autonomous_agent.py`: `--director` hiç çalışmadı.**
+
+CLI bayrağı `execute_daily_run(director_mode=args.director)` çağırıyordu, ama imza `async def execute_daily_run(use_trend: bool = False):` idi:
+
+```
+TypeError: execute_daily_run() got an unexpected keyword argument 'director_mode'
+```
+
+Yani günlük ajanın "yönetmen modu" — madde 24'te üzerine kurulan geri besleme döngüsünün giriş noktası — her çağrıldığında anında ölüyordu. Cron'da bu, sessizce hiç video üretilmemesi demek.
+
+**Çökme 2 — `app/telegram_bot.py`: tanımsız `pending_path`.**
+
+`intent == "generate_video"` dalı, dosyanın hiçbir yerinde tanımlanmayan `pending_path`'i `.is_file()` ile okuyordu:
+
+```
+NameError: name 'pending_path' is not defined
+```
+
+Operatör Telegram'dan "yeni video yap" yazdığında bot çöküyordu. Dosyanın diğer dört dalı (`approve`/`reject`/`status`/`ideas`) doğru API'yi — `job_store.read_pending_payload(media_dir)` — kullanıyordu; yalnızca bu dal geride kalmıştı. Üstelik etrafındaki `try/except Exception: pass` bu hatayı **yutacaktı**, yani kullanıcı hata mesajı bile görmeyecekti.
+
+#### Neden ikisi de CI'dan geçti
+
+`ruff` `video-worker/requirements.txt` içinde **yoktu**. Kurulu olduğu için tesadüfen yerelde bulundular. Yani kapı yoktu — sadece şans vardı.
+
+Ölçüm: `--select E9,F63,F7,F82` (yalnızca "bu kod çalışmaz" sınıfı) depoda **0 ihlal** veriyor. Stil kuralları (`E501`, `I001`…) ise 1000'i aşkın ihlal verirdi; onları eklemek kapıyı gürültüye boğup gerçek hatayı gizlerdi. Bu yüzden kural kümesi bilinçli olarak dar tutuldu.
+
+| Kapı | Kapsam | Sonuç |
+|---|---|---|
+| `ruff --select E9,F63,F7,F82` | `video-worker/app`, `video-worker/tests`, `scripts` | 0 ihlal |
+| `ruff --select B023` | `video-worker/app`, `scripts` | 0 ihlal (1 düzeltme sonrası; aşağıda) |
+
+`ci.yml`'e `lint` işi eklendi (`ruff==0.16.5`, `--isolated`). `--isolated` şart: geliştiricinin makinesindeki `ruff.toml` sonucu değiştirirse "yerelde geçti, CI'da kaldı" olur — bu depoda bu tuzağa zaten düşülmüştü.
+
+#### Üçüncü bulgu — `B023`: geç bağlanan döngü değişkeni
+
+`documentary_v2/director/pipeline.py` içinde `_pool_sort_key` döngü gövdesinde tanımlanıp `prefer_video`'yu serbest değişken olarak yakalıyordu. Bugün zararsız (`sorted` onu hemen çağırıyor), ama fonksiyon döngü dışına taşındığı an sessizce **son** iterasyonun değerini kullanırdı. Parametre olarak bağlandı: `prefer_video: bool = prefer_video`.
+
+#### Regresyon kilidi — ve kilidin kilidi
+
+`tests/test_natural_message_crashes.py` (4 test) eklendi. Çökmeleri yeniden üretmek pahalı olduğu için iki yaklaşım birlikte kullanıldı:
+
+- `pending_path`: gerçek çağrı, `tmp_path` + stub `send_message` ile. Hatayı geri koyunca test **gerçekten** `NameError: name 'pending_path' is not defined` ile düştü — doğrulandı.
+- `director_mode`: gerçek çağrı video üretip yayınlar, testte koşulamaz. Bunun yerine AST ile **imza ↔ çağrı** karşılaştırılıyor. Parametre silinince test `AssertionError: imzada olmayan argüman: {'director_mode'}` verdi — doğrulandı.
+
+Yani testler sadece "geçmiyor", hata geri gelince düşüyor. Bu ayrımı yapmadan yazılan test, hiçbir şeyi kilitlemez.
+
+**Sınır (dürüst):** `scripts/` altındaki `daily_autonomous_agent.py` hâlâ tam kapsanmıyor. Gerçek birim testi `execute_daily_run`'ın yan etkilerini (render, yayın, Telegram) teker teker sarmalamayı gerektirir; bugün yalnızca imza/çağrı tutarlılığı ve CLI argüman ayrıştırması kilitli. Ajanın iç mantığı hâlâ test edilmiyor.
+
+Sonuç: **754 passed, 3 skipped** (madde 26'daki 750 + 4 yeni), yerelde 1 m 57 s.
+
 
 | Commit | İçerik |
 |---|---|
@@ -1145,6 +1198,7 @@ Düzeltme: `scan_targets(root)` — `git ls-files --cached --others --exclude-st
 | `43064ca` | Lint temizliği: kullanılmayan import/değişken (CI yeşil #3) |
 | `96ca81e` | Sır tarayıcısına `--history` modu + baseline + CI `history-scan` işi (madde 26) |
 | `593ec70` | Untracked dosyalar da taranıyor: commit öncesi kapı gerçekten çalışıyor |
+| `f327239` | Bayat sayılar ölçümle hizalandı (test süresi, tarama süresi) |
 
 > Bu belgeyi güncelleyen commit ayrıca `docs:` önekiyle geçmişte bulunabilir (kendi hash'ini içeremez).
 

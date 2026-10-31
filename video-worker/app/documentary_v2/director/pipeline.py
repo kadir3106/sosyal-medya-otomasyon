@@ -229,7 +229,11 @@ def run_director_plan(
             for t in (req.preferred_media_types or [])
         ) or (req.motion_requirement or "").upper() in {"REQUIRED", "PREFERRED"}
 
-        def _pool_sort_key(item) -> tuple:
+        # `prefer_video` parametre olarak bağlanıyor (ruff B023): fonksiyon döngü
+        # gövdesinde tanımlanıp döngü değişkenini serbest değişken olarak
+        # yakalıyordu. Bugün `sorted` hemen çağırdığı için zararsız — ama
+        # fonksiyon döngü dışına taşınırsa sessizce son değeri kullanırdı.
+        def _pool_sort_key(item, prefer_video: bool = prefer_video) -> tuple:
             if isinstance(item, FixtureCandidate):
                 cand = item.candidate
                 path = (item.media_path or "").lower()

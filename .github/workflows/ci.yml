@@ -36,16 +36,43 @@ jobs:
 
       # No .env is present here, which is the point: tests/conftest.py keeps the suite
       # hermetic (legacy pipeline mode, stubbed refine_script, external network blocked,
-      # retries disabled). Verified 750 passed, 3 skipped in ~1 m 46 s on this runner.
+      # retries disabled). Verified 754 passed, 3 skipped in ~1 m 57 s on this runner.
       - name: Run tests
         run: pytest tests -q
+
+  lint:
+    # Neden var: bu depoda iki çökme CI'dan geçti çünkü hiçbir lint kapısı yoktu.
+    # Yalnızca `ruff` KURULU olduğu için elle fark edilmişlerdi:
+    #   - scripts/daily_autonomous_agent.py: `execute_daily_run(director_mode=...)`
+    #     çağrısı, imzada olmayan argüman -> TypeError. `--director` HİÇ çalışmadı.
+    #   - app/telegram_bot.py: tanımsız `pending_path` -> "yeni video yap" NameError.
+    # Seçilen kurallar bilinçli olarak dar: yalnızca "bu kod çalışmaz" sınıfı
+    # (E9 sözdizimi/IO, F63/F7 karşılaştırma hataları, F82 tanımsız isim).
+    # `tests/` de kapsanıyor: yeni eklenen bir test dosyası kullanılmayan import
+    # yüzünden bu turda F401 verdi — testler de kod, onlar da kapıdan geçmeli.
+    # Stil kuralları (E501, I001...) eklenmedi — 1000+ mevcut ihlal kapıyı
+    # susturur ve gerçek hatayı gizler. `--isolated`: geliştiricinin makinesindeki
+    # ruff.toml sonucu değiştirmesin, aksi halde "yerelde geçti, CI'da kaldı" olur.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install ruff
+        run: pip install ruff==0.16.5
+
+      - name: Check for undefined names and syntax errors
+        run: ruff check video-worker/app video-worker/tests scripts --isolated --select E9,F63,F7,F82
 
   secret-scan:
     # Tarama İZLENEN + izlenmeyen (ignore'lu olmayan) dosyaları kapsıyor:
     # `git ls-files --cached --others --exclude-standard`. Yalnızca `ls-files`
     # kullanıldığında yeni yazılmış bir dosyadaki sır commit edilene kadar
     # görünmüyordu (koşu 41239608134'te `test` de bu yüzden düştü).
-    # Yerelde 763 dosyada 1.07 s ölçüldü.
+    # Yerelde 764 dosyada 0.87 s ölçüldü.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

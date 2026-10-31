@@ -30,7 +30,14 @@ from app.telegram_bot import send_message
 from app.topics import release_topic, select_next_topic
 
 
-async def execute_daily_run(use_trend: bool = False):
+async def execute_daily_run(use_trend: bool = False, director_mode: bool = False):
+    """Bir üretim+yayın turu.
+
+    `director_mode` CLI'dan (`--director`) geliyordu ama imzada yoktu: ruff'ın
+    F821'i yakaladı, çalıştırınca doğrulandı — `--director` her seferinde
+    `TypeError: unexpected keyword argument` ile çöküyordu. Parametre eklenerek
+    düzeltildi; aşağıdaki `if director_mode` dalı artık gerçekten erişilebilir.
+    """
     print("\n" + "=" * 60)
     print(f"🚀 OTONOM YAYIN MOTORU BAŞLADI: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
@@ -94,7 +101,7 @@ async def execute_daily_run(use_trend: bool = False):
     
     # İsteğe bağlı: Telegram Yönetmen Modu (Yayın Öncesi Önizleme & Onay Butonları)
     if director_mode and config.TELEGRAM_BOT_TOKEN and config.TELEGRAM_CHAT_ID:
-        from app.telegram_bot import send_message, get_updates, answer_callback_query
+        from app.telegram_bot import answer_callback_query, get_updates
         print("\n📲 [Yönetmen Modu] Telegram'a onay ve önizleme gönderiliyor...")
         reply_markup = {
             "inline_keyboard": [

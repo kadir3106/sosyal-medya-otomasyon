@@ -482,18 +482,20 @@ async def handle_natural_message(
             else:
                 topic = "The Silent Architecture of Power"
 
-        if pending_path.is_file():
-            try:
-                p = json.loads(pending_path.read_text(encoding="utf-8"))
-                send_message(
-                    token,
-                    chat_id,
-                    f"⚠️ Zaten onay bekleyen bir video var: *\"{p.get('title')}\"*\n\n"
-                    "Yeni bir video üretmeden önce mevcut videoyu onaylamak için *'Yayınla'* veya iptal etmek için *'İptal'* yazabilirsin.",
-                )
-                return
-            except Exception:
-                pass
+        # `pending_path` hiçbir yerde tanımlı değildi: ruff F821, çalıştırınca
+        # doğrulandı — "yeni video yap" denince NameError ile çöküyordu. Dosyanın
+        # geri kalanı (approve/reject/status dalları) SQLite'ı tercih edip
+        # pending.json'a düşen `job_store.read_pending_payload`'i kullanıyor;
+        # burada da aynısı yapılıyor ki iki defter birbirinden ayrışmasın.
+        pending = job_store.read_pending_payload(media_dir)
+        if pending:
+            send_message(
+                token,
+                chat_id,
+                f"⚠️ Zaten onay bekleyen bir video var: *\"{pending.get('title')}\"*\n\n"
+                "Yeni bir video üretmeden önce mevcut videoyu onaylamak için *'Yayınla'* veya iptal etmek için *'İptal'* yazabilirsin.",
+            )
+            return
 
         send_message(
             token,
