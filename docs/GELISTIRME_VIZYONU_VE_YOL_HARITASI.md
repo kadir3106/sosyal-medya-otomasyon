@@ -1004,6 +1004,34 @@ Düzeltme üç parça:
 
 Geriye dönük uyum korundu: defter yokken `select_next_topic` eskisi gibi giriş sırasını döndürüyor (bir test bunu kilitliyor).
 
+### 25. CI ilk kez gerçekten koştu: ffmpeg yoktu (2026-10-31)
+
+Yol haritası 17 turdur "CI var" diyordu ama **hiç push edilmemişti**. `origin/cursor/hybrid-flux-architecture` son olarak `15b4c52`'de duruyordu; 50+ commit yalnızca yerelde vardı. Yani `.github/workflows/ci.yml` hiçbir zaman bir GitHub runner'ında çalışmamıştı.
+
+Push edilince ne oldu:
+
+| Koşu | Sonuç |
+|---|---|
+| `41228709572` (ilk gerçek CI) | ❌ `test` kırıldı — **15 test** `FileNotFoundError: 'ffmpeg'` |
+| `41237050980` (düzeltme sonrası) | ✅ **success** — 732 passed, 3 skipped |
+
+**Kök neden kod değil, CI dosyasının kendisiydi.** `ci.yml` şu yorumu taşıyordu:
+
+> `# ffmpeg/ffprobe are preinstalled on ubuntu-latest`
+
+Bu **yanlıştı**. Ve 17 tur boyunca "726 passed" diyen hiçbir koşu bunu göstermedi, çünkü yerel makinede ffmpeg PATH'te. Bu, CI'ın neden var olduğunun en net kanıtı: yerel yeşil, ortam farkını ölçmüyor.
+
+Düzeltme iki parça:
+
+1. **`ci.yml`** artık `apt-get install ffmpeg` çalıştırıyor ve `ffmpeg -version` / `ffprobe -version` basıyor — kurulum bir gün bozulursa iş **yüksek sesle** düşsün, sessizce testlere sızmasın.
+2. **`tests/conftest.py`** tek bir `HAS_FFMPEG` bayrağı + saf `needs_ffmpeg(nodeid)` yüklemi kazandı. ffmpeg yoksa 15 etkilenen dosya `"ffmpeg/ffprobe not installed"` sebebiyle **skip** oluyor; ham traceback operatöre "kod bozuk" gibi görünmüyor.
+
+Kapı listesi bilinçli olarak **dar**: yalnızca koşunun `FAILED tests/...` satırlarında adı geçen dosyalar. `test_ffmpeg_guard.py` iki yönü de sabitliyor — kapılı dosyalar skip olmalı, mock'lanmış/saf-mantık testleri **koşmaya devam etmeli**. `test_ffmpeg_guard_behavior.py` ise `shutil.which`'i `None`'a çeken bir pytest eklentisiyle skip'i *varsaymıyor, kanıtlıyor*.
+
+**Yanlış dönüş (kayda değer):** guard'ı ilk olarak `PATH=""` ile alt süreçte sınamaya çalıştım. Python PATH'siz başlayamadı, koşu **41 dakika** asıldı ve alakasız bir `AttributeError` ile düştü (o da ayrı bir hatamdı: `publish_quality` modül düzeyinde `shutil` import etmiyor). Kararı saf bir fonksiyona taşıyıp süreç-içi eklentiye geçince 5 saniyeye indi.
+
+**Kalan gerçek risk (P0, kanıtlandı):** Git geçmişinde `video-output/tiktok_session/` altında **1015 dosya** var — `Login Data`, `Network/Cookies`, `Local State` dahil. `644196f` bunları ağaçtan temizledi ve `.gitignore` tekrarını engelliyor, ama **geçmişten silmedi**. Ayrıca bu dosyalar zaten `origin` geçmişinde de var (`b3d6b74` ile), yani push yeni bir sızıntı yaratmadı — mevcut olanı görünür kıldı. Yapılması gereken: TikTok oturum çerezlerini geçersiz kılmak (hesap şifresi değişimi / tüm cihazlardan çıkış), sonra geçmişi `git filter-repo` ile temizlemek. `backups/otomasyon-yedek-2026-09-05.tar.gz` de geçmişte ama içindeki `n8n-data.tar` tarandı: gömülü token bulunamadı.
+
 ### Commit geçmişi
 
 | Commit | İçerik |
@@ -1034,6 +1062,8 @@ Geriye dönük uyum korundu: defter yokken `select_next_topic` eskisi gibi giri�
 | `31ec209` | Secret scan test fixture'ları runtime'da kuruluyor (1 dosya) |
 | `557e7ef` | Timeout sonrası durum sorgusu: inflight + TikTok/YouTube API (madde 23, 7 dosya) |
 | `386eb3d` | Madde 23 ölçüm tablosu + commit günlüğü |
+| `5d79d43` | Analitik → üretim geri besleme döngüsü (madde 24, 4 yeni/6 dosya) |
+| `24cd5e0` | CI ffmpeg kurulumu + ffmpeg kapılı testler açık sebeple atlanıyor (madde 25) |
 
 > Bu belgeyi güncelleyen commit ayrıca `docs:` önekiyle geçmişte bulunabilir (kendi hash'ini içeremez).
 
