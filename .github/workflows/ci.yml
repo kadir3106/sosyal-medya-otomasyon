@@ -24,6 +24,7 @@ jobs:
           pip install -r requirements.txt
 
       # No .env is present here, which is the point: tests/conftest.py keeps the suite
-      # hermetic (legacy pipeline mode, stubbed refine_script). Verified 608 passed.
+      # hermetic (legacy pipeline mode, stubbed refine_script, external network blocked,
+      # retries disabled). Verified 646 passed, 3 skipped in ~50 s.
       - name: Run tests
         run: pytest tests -q
