@@ -504,9 +504,23 @@ def _run_publish(payload: dict) -> dict:
     _verify_approved_artifact(payload)
 
     # Claim before any upload: a duplicate /publish would post publicly twice.
-    if not job_store.claim_for_publish(media_dir, job_id):
+    if not job_store.claim_for_publish(media_dir, job_id, kind=kind):
         raise AlreadyPublishedError(job_id, job_store.get_job(media_dir, job_id)["state"])
 
+    try:
+        return _publish_claimed(payload, kind, job_id, media_dir)
+    except (PublishOutcomeUnknownError, AllPlatformsFailedError):
+        raise  # Both already recorded a terminal state plus their own operator guidance.
+    except Exception:
+        # Unexpected crash (bug, disk error, a publisher raising outside the
+        # worker pool). claim_for_publish now *creates* the row for legacy flows,
+        # so leaving it in 'publishing' would make /generate 409 forever. 'failed'
+        # stays claimable, so a retry still works.
+        job_store.mark_failed(media_dir, job_id, "publish_crashed")
+        raise
+
+
+def _publish_claimed(payload: dict, kind: str, job_id: str, media_dir: Path) -> dict:
     if kind == "image":
         tasks = [
             (

@@ -191,13 +191,24 @@ def has_blocking_job(media_dir: str | Path) -> bool:
     return row is not None
 
 
-def claim_for_publish(media_dir: str | Path, job_id: str) -> bool:
+def claim_for_publish(
+    media_dir: str | Path, job_id: str, *, kind: str = "video"
+) -> bool:
     """Atomically move a job to 'publishing'; False if it is already publishing/done.
 
     Publishing is public and irreversible, so a duplicate /publish (n8n retry,
     Telegram double-callback) must not upload twice. 'failed' stays claimable so
-    the "Tekrar dene" button still works. An unknown job is let through: image and
-    legacy flows never create a job row, and refusing them would break publishing.
+    the "Tekrar dene" button still works. An unknown job is still let through:
+    image and legacy flows never create a job row beforehand, and refusing them
+    would break publishing.
+
+    The unknown-job branch used to be `SELECT`, then decide — a check-then-act
+    race. `/publish` is a sync `def`, so FastAPI runs it in the threadpool and two
+    requests really do run in parallel. Measured before the fix: both callers got
+    through and the single legacy video was uploaded twice (8 uploads, 2 posts).
+    Now the row is claimed by an INSERT whose PRIMARY KEY arbitrates, inside the
+    write transaction the UPDATE above already opened. `kind` only labels the row
+    that is created for a previously-unknown job (the image flow has no row either).
     """
     with _connect(media_dir) as conn:
         cur = conn.execute(
@@ -207,8 +218,22 @@ def claim_for_publish(media_dir: str | Path, job_id: str) -> bool:
         )
         if cur.rowcount:
             return True
-        known = conn.execute("SELECT 1 FROM jobs WHERE id=?", (job_id,)).fetchone()
-    return known is None
+        # Row exists but is publishing/done: a real duplicate, refuse it.
+        if conn.execute("SELECT 1 FROM jobs WHERE id=?", (job_id,)).fetchone():
+            return False
+        # Unknown job (legacy/curl flow): claim it by creating the row. The UPDATE
+        # above already holds a write lock, so exactly one concurrent caller wins;
+        # the loser hits the primary key and gets IntegrityError.
+        try:
+            conn.execute(
+                "INSERT INTO jobs "
+                "(id, kind, state, title, payload_json, error, created_at, updated_at) "
+                "VALUES (?, ?, 'publishing', NULL, '{}', NULL, ?, ?)",
+                (job_id, kind, _utc_now(), _utc_now()),
+            )
+        except sqlite3.IntegrityError:
+            return False
+    return True
 
 
 def mark_done(media_dir: str | Path, job_id: str) -> None:
