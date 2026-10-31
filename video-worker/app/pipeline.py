@@ -227,7 +227,9 @@ def _generate_video_sync(job_id: str, topic: str | None = None) -> dict:
         log_event(job_id, "pipeline_mode", **_pm)
 
         if from_pool:
-            topic = select_next_topic(topics_path, state_path)
+            # `media_dir` veriliyor: konu havuzu geçmiş performansa göre
+            # sıralanabilsin (performans defteri burada tutuluyor).
+            topic = select_next_topic(topics_path, state_path, media_dir=str(media_dir))
             job_store.update_job(media_dir, job_id, topic=topic)
         log_event(job_id, "topic_selected", topic=topic, lang=lang, topics_path=topics_path)
 

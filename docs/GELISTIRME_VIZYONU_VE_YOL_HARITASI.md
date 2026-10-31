@@ -693,12 +693,13 @@ Faz 0'ın P0 çekirdeği uygulandı ve doğrulandı.
 | 21 | Yayın kaydı `job_id` + `approved_sha256` taşıyor; manifest okuyucusu ve `provenance.trace_publication` eklendi | `app/publish_log.py`, `app/provenance.py` (yeni), `app/documentary_v2/telemetry.py`, `app/main.py`, `app/analytics.py` | "Bu yayın hangi işin/manifestin/onayın ürünü?" **artık cevaplanıyor** (`trace.complete=True`); manifest okuyan tüketici 0 → 1 |
 | 22 | Yayın öncesi teknik kalite kapısı (süre/ses akışı/ortalama seviye) | `app/publish_quality.py` (yeni), `app/errors.py`, `app/main.py`, `app/telegram_bot.py` | Sessiz/boş/çok kısa video **yayınlanamıyor** (ölçüm: sessiz -91 dB → red, sesli -21 dB → geçti); reddedilen dosya claim'i tüketmiyor; Telegram'da retry butonu sunulmuyor |
 | 23 | Timeout sonrası gerçek durum sorgusu: `inflight` kimlik kaydı + TikTok/YouTube API | `app/publish_status.py` (yeni), `app/publishers/publication_status.py` (yeni), `app/publishers/{tiktok,youtube}.py`, `app/main.py` | Sorgu "yayınlandı" derse iş **`done`** olur (`publish_recovered_after_timeout`) — körlemesine retry riski kalktı; token diske yazılmıyor |
+| 24 | Kalıcı performans defteri + konu seçiminde performans sıralaması + hook hafızası beslemesi | `app/performance_ledger.py` (yeni), `app/analytics.py`, `app/topics.py`, `app/analytics_memory.py`, `app/{pipeline,main}.py` | Döngü kapandı: prompt eki **0 → 229 karakter**; konu seçimi havuz sırası yerine **ölçülmüş performansı** kullanıyor |
 
 ### Ölçülen sonuç
 
 | Metrik | Önce | Sonra |
 |---|---|---|
-| Tam paket | **tamamlanamıyordu** (4 dosya askıda) | **708 passed, 3 skipped, 0 failed** |
+| Tam paket | **tamamlanamıyordu** (4 dosya askıda) | **726 passed, 3 skipped, 0 failed** |
 | Süre | belirsiz (askı) | **50 sn** (dış ağ engeli + retry kapalı) |
 | Başarısız test | 5 | **0** |
 
@@ -968,6 +969,41 @@ Bilinçli sınırlar:
 - **YouTube'da kimlik geç geliyor**: `video_id` yalnızca yükleme yanıtıyla gelir. Yükleme tamamlanıp yanıt gecikirse kayıt kurtarır; read-timeout daha erken oluşursa kimlik hiç yoktur. Bu sınır kodda belgelendi.
 - **Erişim token'ı diske yazılmıyor**: `inflight` dosyası `media/` altında düz JSON; token oraya sızar ve secret scan'in kapsamı dışında kalırdı. Token sorgu anında canlı yenileniyor. Bunu bir test kilitliyor (`test_inflight_never_persists_access_token`) — ilk tasarımımda token yazılıyordu, kendi testim yakaladı.
 
+### Analitik → üretim geri besleme döngüsü (madde 24)
+
+Yol haritasının üçüncü ilkesi: *"Yayın sonrası öğrenme — sistem hangi konu, hook, format ve sesin neden çalıştığını öğrenmeli."* Ölçtüm: döngü **açıktı**, ama yarısı zaten yazılmıştı:
+
+| Parça | Durum |
+|---|---|
+| `analytics_memory.format_hook_memory_context` pipeline'da okunuyor | ✅ (`pipeline.py:247`) |
+| `store_winning_hook` **çağıran** | **0** |
+| `analytics.py` içinde diske yazma | **YOK** — rapor her seferinde platformdan yeniden çekiliyor |
+| `topics.py` içinde performans sinyali | **YOK** |
+| Boş defterle prompt eki | **0 karakter** |
+| Elle yazılırsa | **203 karakter** ← okuma tarafı sağlamdı |
+
+Yani hafıza mekanizması vardı, onu besleyen hiçbir şey yoktu. Her rapor sayıları ekrana basıp atıyordu.
+
+Düzeltme üç parça:
+
+1. **`app/performance_ledger.py`** (yeni) — kalıcı metrik defteri. Ham metrik saklanıyor (yol haritası: *"ham metrik saklanmalı"*), `<job_id>:<platform>` anahtarıyla tekilleştiriliyor, böylece aynı hafta iki kez rapor çekmek mükerrer satır üretmiyor. `topic_performance()` ve `best_hooks()` toplulaştırma sağlıyor.
+2. **`analytics.py`** artık ölçtüğü her metriği deftere yazıyor. Defter yazımı raporu asla düşürmüyor (yutuluyor): rapor insan için, defter makine için.
+3. **`topics.py`** performansa göre sıralıyor — ama **yumuşak**: en az 2 video şartı aranıyor, böylece tek videonun şansı sıralamayı belirlemiyor. Ölçülmemiş konu da açlıkta kalmıyor.
+
+`analytics_memory` iki kaynağı birleştiriyor: operatörün elle işaretlediği hook'lar + ölçülmüş performanstan türetilenler. Ayrıca `store_winning_hook` artık atomik yazıyor — kilitsiz oku-değiştir-yaz deseni paylaşılan `jsonstore` ölçümünde 40 kayıttan 35'ini kaybediyordu.
+
+**Uçtan uca ölçüm** (iki video, sahte YouTube yanıtları):
+
+| Adım | Sonuç |
+|---|---|
+| Önce: prompt eki | **0 karakter** |
+| Rapor çekilince defter | **2 kayıt** yazıldı |
+| Sonra: prompt eki | **229 karakter**, en iyi hook içinde |
+| Konu performansı | `Uzay: 1200`, `Deniz: 80` |
+| Konu seçimi | havuz `Deniz, Uzay, Yeni` → seçilen **`Uzay`** |
+
+Geriye dönük uyum korundu: defter yokken `select_next_topic` eskisi gibi giriş sırasını döndürüyor (bir test bunu kilitliyor).
+
 ### Commit geçmişi
 
 | Commit | İçerik |
@@ -997,6 +1033,7 @@ Bilinçli sınırlar:
 | `cd7628c` | Yayın öncesi kalite kapısı + CI secret scan (madde 22, 10 dosya) |
 | `31ec209` | Secret scan test fixture'ları runtime'da kuruluyor (1 dosya) |
 | `557e7ef` | Timeout sonrası durum sorgusu: inflight + TikTok/YouTube API (madde 23, 7 dosya) |
+| `386eb3d` | Madde 23 ölçüm tablosu + commit günlüğü |
 
 > Bu belgeyi güncelleyen commit ayrıca `docs:` önekiyle geçmişte bulunabilir (kendi hash'ini içeremez).
 

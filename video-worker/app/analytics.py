@@ -1,19 +1,33 @@
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from app.http_client import session
+from app.performance_ledger import record_metrics
 from app.publish_log import load_recent_entries
 from app.publishers.youtube import get_access_token as get_youtube_access_token
 
 YOUTUBE_VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos"
 GRAPH_API_BASE = "https://graph.facebook.com/v19.0"
 
+# Ham metrik alanları platforma göre değişiyor; hangi alanların "ölçüm" sayıldığı
+# burada tutuluyor ki deftere boş satır yazılmasın.
+_MEASURED_FIELDS = ("views", "plays", "likes", "comments", "shares", "saved")
 
-def build_weekly_report(log_path: str, youtube_creds: dict, meta_creds: dict) -> str:
+
+def build_weekly_report(
+    log_path: str,
+    youtube_creds: dict,
+    meta_creds: dict,
+    media_dir: str | None = None,
+) -> str:
     since = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
     entries = load_recent_entries(log_path, since_iso=since)
 
     if not entries:
         return "Son 7 günde yayınlanan video yok."
+
+    # Defter yolu: yayın kaydının yanında tutuluyor (çağıran ayrıca yol vermezse).
+    ledger_dir = media_dir or str(Path(log_path).parent)
 
     lines = [f"📊 Haftalık Rapor ({len(entries)} video)\n"]
     for entry in entries:
@@ -22,11 +36,18 @@ def build_weekly_report(log_path: str, youtube_creds: dict, meta_creds: dict) ->
         lines.append(f"🎬 {entry['title']}")
         lines.append(f"  İş: {job_id}")
         platforms = entry.get("platforms", {})
+        _common = {
+            "job_id": entry.get("job_id") or "",
+            "topic": entry.get("topic") or "",
+            "title": entry.get("title") or "",
+            "hook": entry.get("hook") or "",
+        }
 
         youtube = platforms.get("youtube")
         if youtube and youtube.get("status") == "success":
             try:
                 stats = _fetch_youtube_stats(youtube["video_id"], youtube_creds)
+                _persist(ledger_dir, _common, "youtube", stats)
                 lines.append(
                     f"  YouTube: {stats.get('views', '?')} views, "
                     f"{stats.get('likes', '?')} likes, {stats.get('comments', '?')} comments"
@@ -38,6 +59,7 @@ def build_weekly_report(log_path: str, youtube_creds: dict, meta_creds: dict) ->
         if instagram and instagram.get("status") == "success":
             try:
                 stats = _fetch_instagram_stats(instagram["media_id"], meta_creds)
+                _persist(ledger_dir, _common, "instagram", stats)
                 lines.append(
                     f"  Instagram: {stats.get('plays', '?')} plays, "
                     f"{stats.get('likes', '?')} likes, {stats.get('comments', '?')} comments"
@@ -49,6 +71,7 @@ def build_weekly_report(log_path: str, youtube_creds: dict, meta_creds: dict) ->
         if facebook and facebook.get("status") == "success":
             try:
                 stats = _fetch_facebook_stats(facebook["video_id"], meta_creds)
+                _persist(ledger_dir, _common, "facebook", stats)
                 lines.append(f"  Facebook: {stats.get('views', '?')} views")
             except Exception:
                 lines.append("  Facebook: veriler alınamadı")
@@ -74,6 +97,26 @@ def build_weekly_report(log_path: str, youtube_creds: dict, meta_creds: dict) ->
         lines.append("")
 
     return "\n".join(lines)
+
+
+def _persist(
+    media_dir: str,
+    common: dict,
+    platform: str,
+    stats: dict,
+) -> None:
+    """Ölçülen metrikleri deftere yazar; boş ölçüm yazmaz.
+
+    Defter yazımı raporun kendisini asla düşürmemeli: okuma/yazma hatası
+    yutuluyor. Rapor insan içindir, defter makine içindir — biri diğerini
+    engellememeli.
+    """
+    if not stats or not any(stats.get(f) is not None for f in _MEASURED_FIELDS):
+        return
+    try:
+        record_metrics(media_dir, platform=platform, metrics=stats, **common)
+    except Exception:
+        pass
 
 
 def _fetch_youtube_stats(video_id: str, creds: dict) -> dict:

@@ -336,7 +336,9 @@ async def generate_image():
     mark_run_today(str(media_dir / "last_image_run.txt"))
     topic = None
     try:
-        topic = select_next_topic(config.IMAGE_TOPICS_PATH, state_path)
+        topic = select_next_topic(
+            config.IMAGE_TOPICS_PATH, state_path, media_dir=str(media_dir)
+        )
         job_store.update_job(media_dir, job_id, topic=topic)
         content = generate_image_content(topic, api_key=config.OPENROUTER_API_KEY)
 
@@ -890,6 +892,9 @@ def analytics_weekly():
             "refresh_token": config.YOUTUBE_REFRESH_TOKEN,
         },
         meta_creds={"page_access_token": config.META_PAGE_ACCESS_TOKEN},
+        # Ölçülen metrikler bu dizindeki performance_ledger.json'a yazılır;
+        # verilmezse yayın kaydının yanına düşerdi ve defter ikiye bölünürdü.
+        media_dir=str(config.MEDIA_DIR),
     )
     return {"report": report}
 

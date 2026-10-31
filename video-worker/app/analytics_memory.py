@@ -38,19 +38,49 @@ def _ledger_path(media_dir: str | Path | None = None) -> Path:
 
 
 def load_winning_hooks(media_dir: str | Path | None = None) -> list[dict[str, Any]]:
-    """Stub store: return previously recorded winning hooks (newest last)."""
+    """Stub store: previously recorded winning hooks (newest last).
+
+    İki kaynak birleştiriliyor:
+
+    1. `winning_hooks.json` — operatörün elle işaretlediği hook'lar.
+    2. `performance_ledger.json` — ÖLÇÜLMÜŞ performanstan türetilen hook'lar.
+
+    İkinci kaynak ölçümün eklenmesiyle geldi: önce yalnızca birinci vardı ve
+    onu yazan hiçbir kod yoktu (ölçüm: `store_winning_hook` çağrısı 0), yani
+    hafıza prompt'a her zaman 0 karakter ekliyordu. Ölçülen hook'lar
+    `views`/`samples` alanlarıyla geliyor; böylece çağıran sıralayabiliyor.
+    """
     path = _ledger_path(media_dir)
-    if not path.is_file():
-        return []
+    hooks: list[dict[str, Any]] = []
+    if path.is_file():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("winning_hooks ledger unreadable: %s", exc)
+            data = None
+        if data is not None:
+            stored = data.get("hooks") if isinstance(data, dict) else data
+            if isinstance(stored, list):
+                hooks = [h for h in stored if isinstance(h, dict) and h.get("hook")]
+
+    measured = _measured_hooks(media_dir)
+    if measured:
+        seen = {(h.get("hook") or "").strip().lower() for h in hooks}
+        hooks.extend(
+            h for h in measured
+            if (h.get("hook") or "").strip().lower() not in seen
+        )
+    return hooks
+
+
+def _measured_hooks(media_dir: str | Path | None) -> list[dict[str, Any]]:
+    """Performans defterinden en iyi hook'lar; defter yoksa boş liste."""
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        logger.warning("winning_hooks ledger unreadable: %s", exc)
+        from app.performance_ledger import best_hooks
+
+        return best_hooks(Path(media_dir or config.MEDIA_DIR))
+    except Exception:  # noqa: BLE001 - hafıza asla üretimi düşürmemeli
         return []
-    hooks = data.get("hooks") if isinstance(data, dict) else data
-    if not isinstance(hooks, list):
-        return []
-    return [h for h in hooks if isinstance(h, dict) and h.get("hook")]
 
 
 def store_winning_hook(
@@ -80,10 +110,12 @@ def store_winning_hook(
         entry.update(extra)
     entries.append(entry)
     entries = entries[-MAX_STORED_HOOKS:]
-    path.write_text(
-        json.dumps({"hooks": entries}, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    # Kilitli + atomik yazma: eşzamanlı onay/ölçüm aynı dosyaya yazabiliyor.
+    # Ölçüm (paylaşılan desende): kilitsiz oku-değiştir-yaz 40 kayıttan 35'ini
+    # kaybediyordu — bu defter de aynı riski taşıyordu.
+    from app.jsonstore import write_atomic
+
+    write_atomic(path, {"hooks": entries})
 
 
 def format_hook_memory_context(
