@@ -41,8 +41,11 @@ jobs:
         run: pytest tests -q
 
   secret-scan:
-    # Izlenen dosyalarda sır deseni arar. Yerelde 396 dosyada temiz ölçüldü;
-    # bu job GitHub runner'ında da temiz geçti (5 s).
+    # Tarama İZLENEN + izlenmeyen (ignore'lu olmayan) dosyaları kapsıyor:
+    # `git ls-files --cached --others --exclude-standard`. Yalnızca `ls-files`
+    # kullanıldığında yeni yazılmış bir dosyadaki sır commit edilene kadar
+    # görünmüyordu (koşu 41239608134'te `test` de bu yüzden düştü).
+    # Yerelde 763 dosyada 1.07 s ölçüldü.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

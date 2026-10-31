@@ -1087,7 +1087,27 @@ Bu yüzden `fetch-depth: 0` zorunlu ve `ci.yml`'de yorumuyla duruyor.
 
 **Sınırları (dürüst):** (a) Regex ve yol desenleri bilinen biçimleri yakalar; tanınmayan bir sır biçimi kaçar. (b) Baseline rotasyondan sonra da dolu kalırsa eski bulguları gizlemeye devam eder — bu yüzden `how_to_clear` alanı dosyanın içinde. (c) İkili dosyalarda içerik taranmaz (yalnızca yol); bu tasarım gereği.
 
-Sonuç: **749 passed, 3 skipped** (önceki 732 + 17 yeni), yerelde ve CI'da aynı.
+Sonuç: **750 passed, 3 skipped** (önceki 732 + 18 yeni), yerelde ve CI'da aynı.
+
+#### 26.1 CI bu işi iki kez kırdı — ve haklıydı (2026-10-31)
+
+Bu maddeyi yazarken CI'ın değerini iki kez daha gördüm. İkisi de **yerelde yeşil, runner'da kırmızı** oldu:
+
+**Koşu `41239608134` — her iki iş de düştü.** Sebep kendi yeni test dosyamdı. Kök neden öğretici: `tracked_files()` = `git ls-files` yalnızca **izlenen** dosyaları döndürüyordu. Dosyam o sırada *untracked* olduğu için yerel tarama "Temiz: 398 dosya" dedi; commit edip CI'a gidince içindeki literal `sk-...` fixture'ı görünür oldu ve `test` + `history-scan` birlikte kırıldı. **Yani commit öncesi çalışan bir kapı, hatayı ancak commit'ten sonra gösteriyordu** — kullanışsız.
+
+Düzeltme: `scan_targets(root)` — `git ls-files --cached --others --exclude-standard`. Untracked ama ignore'lu olmayan dosyalar da taranıyor. Ayrıca `root` zorunlu: `git` süreç cwd'sinde çalışır, `main` ise dosyaları `root` altından okur; pytest cwd'si `video-worker` olduğu için bu ayrışma gerçek bir hataya dönüştü. Maliyet 396 → 763 dosya, **1,07 sn**.
+
+**Aynı koşuda ikinci ders:** baseline'ı commit etmeden CI'a gittim. `scripts/secret_scan_baseline.json` yoksa tarayıcı her şeyi "yeni" sayar ve iş kırmızı olur — kabul mekanizması sadece yerelde çalışıyordu. İlk koşuda tam bu görüldü: `12 baseline'da kabul edilmiş` yerine yerelde 0.
+
+**Koşu `41240417309` — üç iş de yeşil:**
+
+| İş | Süre | Sonuç |
+|---|---|---|
+| `secret-scan` | 7 s | ✅ |
+| `test` | 1 m 31 s | ✅ 750 passed, 3 skipped |
+| `history-scan` | 9 s | ✅ 14 bulgu, 14 baseline'da kabul, 0 yeni |
+
+`history-scan` logunda **14 bulgu** görünmesi kritik: shallow klonda 0 görünüyordu. Yani `fetch-depth: 0` runner'da gerçekten yük taşıyor, tarama simüle edilmiyor.
 
 ### Commit geçmişi
 
@@ -1123,6 +1143,8 @@ Sonuç: **749 passed, 3 skipped** (önceki 732 + 17 yeni), yerelde ve CI'da ayn�
 | `24cd5e0` | CI ffmpeg kurulumu + ffmpeg kapılı testler açık sebeple atlanıyor (madde 25) |
 | `cf03d0a` | Madde 25 ölçüm tablosu + CI yorumları güncel sayılarla |
 | `43064ca` | Lint temizliği: kullanılmayan import/değişken (CI yeşil #3) |
+| `96ca81e` | Sır tarayıcısına `--history` modu + baseline + CI `history-scan` işi (madde 26) |
+| `593ec70` | Untracked dosyalar da taranıyor: commit öncesi kapı gerçekten çalışıyor |
 
 > Bu belgeyi güncelleyen commit ayrıca `docs:` önekiyle geçmişte bulunabilir (kendi hash'ini içeremez).
 
