@@ -84,6 +84,10 @@ def isolated(tmp_path, monkeypatch):
     """
     fake_tiktok_browser = types.ModuleType("app.publishers.tiktok_browser")
     fake_tiktok_browser.has_active_tiktok_session = lambda: False  # type: ignore[attr-defined]
+    fake_tiktok_browser.upload_via_tiktok_browser = lambda **kw: {  # type: ignore[attr-defined]
+        "platform": "tiktok",
+        "status": "success",
+    }
     monkeypatch.setitem(sys.modules, "app.publishers.tiktok_browser", fake_tiktok_browser)
     # `app.publishers` henüz import edilmemişse `from ... import` alt modülü
     # sys.modules'tan bulur; edilmişse niteliği de düzeltmek gerekir.
@@ -346,6 +350,151 @@ def test_director_without_telegram_falls_through_to_publish(isolated, monkeypatc
 
     assert result is not None
     assert isolated["youtube"].call_count == 1
+
+
+# --------------------------------------------------------------------------- #
+# TikTok web yolu — üç ayrı başarısızlık durumu ayırt edilmeli
+#
+# Bulgu (madde 27.4): bu yol konteynerde hiçbir zaman çalışmadı ve tek
+# `except Exception` yüzünden tek satır uyarıya indirgeniyordu. Aşağıdaki
+# testler, üç durumun artık AYRI raporlandığını ve hiçbirinin turu
+# düşürmediğini kilitliyor.
+# --------------------------------------------------------------------------- #
+
+
+def _tiktok_status(isolated) -> str:
+    """`platforms_status` içine yazılan TikTok satırını bulur.
+
+    Özet metni yalnızca Telegram yapılandırılmışsa gönderiliyor
+    (`if config.TELEGRAM_BOT_TOKEN and config.TELEGRAM_CHAT_ID`). Bu yüzden
+    çağıran testler `patch.multiple(config, TELEGRAM_BOT_TOKEN=..., ...)`
+    ile Telegram'ı açmalı; aksi halde `send_message` hiç çağrılmaz.
+    """
+    assert isolated["send"].call_args is not None, (
+        "send_message çağrılmadı — Telegram yapılandırılmamış olabilir"
+    )
+    sent = isolated["send"].call_args[0][2]
+    for line in sent.splitlines():
+        if "TikTok" in line:
+            return line
+    return ""
+
+
+def _inject_tiktok(monkeypatch, *, session: bool, upload) -> None:
+    """Gerçek `tiktok_browser` yerine sahte modül koy (playwright import edilmesin)."""
+    fake = types.ModuleType("app.publishers.tiktok_browser")
+    fake.has_active_tiktok_session = lambda: session  # type: ignore[attr-defined]
+    fake.upload_via_tiktok_browser = upload  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "app.publishers.tiktok_browser", fake)
+    publishers = sys.modules.get("app.publishers")
+    if publishers is not None:
+        monkeypatch.setattr(publishers, "tiktok_browser", fake, raising=False)
+
+
+def test_tiktok_import_error_is_reported_not_swallowed(isolated, monkeypatch):
+    """playwright yoksa: tur devam eder, ama rapor 'web yolu devre dışı' der.
+
+    ÖNEMLİ: bu, üretimdeki gerçek durum. `video-worker/requirements.txt` ve
+    `Dockerfile` playwright kurmuyor; yani konteynerde `ImportError` her koşuda
+    oluşuyor. Eskiden `except Exception` bunu yutup yalnızca bir uyarı
+    basıyordu — operatör TikTok'un neden yayınlanmadığını göremiyordu.
+    """
+    monkeypatch.setenv("ALLOW_AUTONOMOUS_PUBLISH", "true")
+    # Import'u CI'daki gibi başarısız yap: sys.modules'ta None -> ImportError.
+    monkeypatch.setitem(sys.modules, "app.publishers.tiktok_browser", None)
+
+    # Özet metni yalnızca Telegram açıkken gönderiliyor.
+    with patch.multiple(config, TELEGRAM_BOT_TOKEN="tok", TELEGRAM_CHAT_ID="42"), patch(
+        "app.channel_growth.analyze_channel_growth", side_effect=RuntimeError("yok")
+    ), patch.object(agent, "generate_video", return_value=FAKE_RESULT):
+        result = _run()
+
+    assert result is not None, "TikTok yolu turu düşürmemeli"
+    assert "devre dışı" in _tiktok_status(isolated)
+
+
+def test_tiktok_missing_session_is_reported_quietly(isolated, monkeypatch):
+    """Oturum yoksa: beklenen durum, 'yayın yok (oturum yok)' raporlanır."""
+    monkeypatch.setenv("ALLOW_AUTONOMOUS_PUBLISH", "true")
+    # isolated fixture zaten has_active_tiktok_session -> False enjekte ediyor.
+
+    with patch.multiple(config, TELEGRAM_BOT_TOKEN="tok", TELEGRAM_CHAT_ID="42"), patch(
+        "app.channel_growth.analyze_channel_growth", side_effect=RuntimeError("yok")
+    ), patch.object(agent, "generate_video", return_value=FAKE_RESULT):
+        _run()
+
+    assert "oturum yok" in _tiktok_status(isolated)
+
+
+def test_tiktok_upload_failure_is_reported(isolated, monkeypatch):
+    """Oturum var ama yükleme patlarsa: 'Web yüklemesi başarısız' raporlanır.
+
+    Bu üçüncü durum; eskiden `print` ile geçiliyor, `platforms_status`'a hiç
+    yazılmıyordu — yani operatörün gördüğü özette TikTok satırı yoktu.
+    """
+
+    def _boom(**_kwargs):
+        raise RuntimeError("Post butonu bulunamadı")
+
+    monkeypatch.setenv("ALLOW_AUTONOMOUS_PUBLISH", "true")
+    _inject_tiktok(monkeypatch, session=True, upload=_boom)
+
+    with patch.multiple(config, TELEGRAM_BOT_TOKEN="tok", TELEGRAM_CHAT_ID="42"), patch(
+        "app.channel_growth.analyze_channel_growth", side_effect=RuntimeError("yok")
+    ), patch.object(agent, "generate_video", return_value=FAKE_RESULT):
+        result = _run()
+
+    assert result is not None
+    assert "Web yüklemesi başarısız" in _tiktok_status(isolated)
+
+
+def test_tiktok_web_success_reaches_platform_summary(isolated, monkeypatch):
+    """Mutlu yol: oturum var, yükleme başarılı -> özet 'Yayında (Web)' der."""
+    monkeypatch.setenv("ALLOW_AUTONOMOUS_PUBLISH", "true")
+    _inject_tiktok(
+        monkeypatch,
+        session=True,
+        upload=lambda **kw: {"platform": "tiktok", "status": "success"},
+    )
+
+    with patch.multiple(config, TELEGRAM_BOT_TOKEN="tok", TELEGRAM_CHAT_ID="42"), patch(
+        "app.channel_growth.analyze_channel_growth", side_effect=RuntimeError("yok")
+    ), patch.object(agent, "generate_video", return_value=FAKE_RESULT):
+        _run()
+
+    assert "Yayında (Web)" in _tiktok_status(isolated)
+
+
+def test_tiktok_skipped_when_official_api_already_succeeded(isolated, monkeypatch):
+    """Resmi API başarılıysa web yolu hiç denenmez (çift yayın olmasın)."""
+    called = {"web": 0}
+
+    def _count(**_kwargs):
+        called["web"] += 1
+        return {"platform": "tiktok", "status": "success"}
+
+    monkeypatch.setenv("ALLOW_AUTONOMOUS_PUBLISH", "true")
+    _inject_tiktok(monkeypatch, session=True, upload=_count)
+
+    # Resmi API yolu: token dosyası + client key gerekiyor.
+    token = isolated["tmp_path"] / "tiktok_token.json"
+    token.write_text('{"access_token": "x"}', encoding="utf-8")
+
+    with patch.multiple(
+        config,
+        TIKTOK_CLIENT_KEY="ck",
+        TIKTOK_CLIENT_SECRET="cs",
+        TIKTOK_TOKEN_PATH=str(token),
+    ), patch(
+        "app.publishers.tiktok.upload_to_tiktok",
+        return_value={"status": "success"},
+        create=True,
+    ), patch(
+        "app.channel_growth.analyze_channel_growth", side_effect=RuntimeError("yok")
+    ), patch.object(agent, "generate_video", return_value=FAKE_RESULT):
+        _run()
+
+    assert called["web"] == 0, "resmi API başarılıyken web yolu da çalıştı (çift yayın riski)"
 
 
 # --------------------------------------------------------------------------- #

@@ -1267,6 +1267,50 @@ Bu bölümü ilk yazdığımda "`scripts/` ve `app/` içinde `import django` ge�
 
 Doğru olan kısım şu: depoda "hangi import'lar gerçekten kurulu?" sorusunu yanıtlayan bir kontrol yok. `playwright` bunun kanıtlanmış tek örneği (üstteki bölüm). `django` örneği değil.
 
+#### 27.5 Sessizliği kaldırdım: TikTok web yolu artık üç durumu ayırıyor
+
+Madde 27.4'te bulguyu yazmakla bıraktım — kusur hâlâ koddaydı. Bu bölüm onu kapatıyor.
+
+**Kusur, üç katmanlıydı ve her katman tek başına yeterliydi:**
+
+| Katman | Gerçek | Sonuç |
+|---|---|---|
+| Import | `tiktok_browser.py:17` `from playwright.sync_api import ...` | playwright `requirements.txt`'te yok → `ImportError` |
+| Imaj | `Dockerfile` yalnızca `pip install -r requirements.txt` | playwright imaja hiç girmiyor |
+| Veri | `SESSION_DIR` = `<repo>/video-output/tiktok_session` | konteynere mount edilenler: `./video-worker/app`, `shared-media`, `tunnel-logs`, `tiktok-token`. `video-output/` **yok** |
+
+Yani konteynerde bu yol üç ayrı noktadan birden imkânsız. Üstelik tek `except Exception` hepsini yutuyordu: tur devam ediyor, tek satır `⚠️ TikTok Web Hatası: ...` basılıyor, `platforms_status`'a (operatörün Telegram özetine) hiçbir şey yazılmıyordu. Operatör "TikTok'a neden gitmedi?" sorusunun cevabını göremiyordu.
+
+**Yaptığım ayrım — üç durum, üç ayrı rapor:**
+
+| Durum | Önce | Sonra |
+|---|---|---|
+| playwright yok (`ImportError`) | `except` yutar, özete hiç yazılmaz | `⚠️ TikTok web yolu KULLANILAMIYOR (playwright imajda kurulu değil)` + *"TikTok yayını için resmi API gerekir"* + özete `⚠️ Yayın yok (web yolu imajda devre dışı)` |
+| Oturum yok | sessiz `if` (hiç log yok) | `ℹ️ TikTok web oturumu yok — tarayıcı yolu atlanıyor` + özete `⚠️ Yayın yok (oturum yok)` |
+| Yükleme patladı | yalnız `print`, özete yazılmaz | özete `⚠️ Web yüklemesi başarısız` |
+
+`except ImportError` artık `except Exception`'dan **ayrı**: beklenen bir yapılandırma durumu ile gerçek bir hatayı aynı sepete koymamak için.
+
+**Neden kodu silmedim.** `tiktok_browser.py` (198 satır) kendi kendine yeten, doğru yazılmış bir Playwright yükleyicisi; `scripts/tiktok_browser_login.py` ile oturum üretme yolu da duruyor. Yerelde (playwright kurulu, `video-output/` mevcut) gerçekten çalışabilir. Sorun kod değil, **imajın onu içermemesi**. Silmek, çalışan bir yeteneği "konteynerde yok" diye yok etmek olurdu; doğru düzeltme kararı gizlemek değil, **görünür kılmaktı**.
+
+**5 yeni test + mutasyon kanıtı.** `test_daily_autonomous_agent.py`'ye eklendi (20 → 25 test):
+
+| Test | Kilitlediği |
+|---|---|
+| `test_tiktok_import_error_is_reported_not_swallowed` | `sys.modules`'a `None` koyup üretimdeki gerçek `ImportError` durumu; özette "devre dışı" görünmeli, tur düşmemeli |
+| `test_tiktok_missing_session_is_reported_quietly` | "oturum yok" raporlanmalı |
+| `test_tiktok_upload_failure_is_reported` | oturum var + yükleme patlar → "Web yüklemesi başarısız" özette |
+| `test_tiktok_web_success_reaches_platform_summary` | mutlu yol: "Yayında (Web)" |
+| `test_tiktok_skipped_when_official_api_already_succeeded` | resmi API başarılıysa web yolu **hiç** denenmemeli (çift yayın riski) |
+
+Eski (tek `except Exception`) sürüm geri konup koşturuldu: **3 test düştü** (`import_error`, `missing_session`, `upload_failure`), diğer 2'si geçti — doğru davranış, çünkü onlar eskiden de çalışan yolları sınıyor. Yani testler koruyor.
+
+**Test yazarken bir hata daha:** `send_message` hiç çağrılmıyordu, çünkü özet metni yalnızca `config.TELEGRAM_BOT_TOKEN and config.TELEGRAM_CHAT_ID` doluysa gönderiliyor. İlk koşuda 4 test `TypeError: 'NoneType' object is not subscriptable` verdi (mock çağrılmamış). Testlere Telegram yapılandırması eklendi ve `_tiktok_status` artık çağrı yoksa açık mesajla düşüyor.
+
+**Doğrulama:** 25 test yerelde **ve** CI taklidinde (`sys.modules["playwright"] = None`) geçiyor; tam paket CI taklidinde **779 passed, 3 skipped**. `ruff --select E9,F63,F7,F82`: 0 ihlal.
+
+**Kalan karar (bilinçli, kapsam dışı):** playwright imaja eklenip bu yol gerçekten çalıştırılsın mı, yoksa TikTok yalnızca resmi API'ye mi bırakılsın? Bu bir ürün kararı — imaja ~400 MB tarayıcı bağımlılığı eklemek ya da bir yeteneği resmen bırakmak anlamına geliyor. Kod artık hangi durumda olduğunu söylüyor; karar verildiğinde tek yerde değişecek.
+
 
 **Sınır (dürüst):** `scripts/` altındaki `daily_autonomous_agent.py` hâlâ tam kapsanmıyor. Gerçek birim testi `execute_daily_run`'ın yan etkilerini (render, yayın, Telegram) teker teker sarmalamayı gerektirir; bugün yalnızca imza/çağrı tutarlılığı ve CLI argüman ayrıştırması kilitli. Ajanın iç mantığı hâlâ test edilmiyor.
 
@@ -1310,6 +1354,9 @@ Sonuç: **754 passed, 3 skipped** (madde 26'daki 750 + 4 yeni), yerelde 1 m 57 s
 | `f327239` | Bayat sayılar ölçümle hizalandı (test süresi, tarama süresi) |
 | `3974684` | Madde 26.1: iki kez kırılan CI'ın dersleri belgelendi |
 | `24ae21d` | İki sessiz çökme düzeltildi (`--director`, `pending_path`) + ruff kapısı (madde 27) |
+| `fae1fe1` | Otonom yayın turu için 20 davranış testi + 4 mutasyon kanıtı (madde 27.2) |
+| `a9296ab` | Testler playwright olmadan da geçsin — CI 17 ERROR verdi (madde 27.4) |
+| `—` | TikTok web yolu üç durumu ayırıyor; sessiz `except` kaldırıldı (madde 27.5) |
 | `—` | Madde 27.1–27.3: üretim logunda 38 çökme kanıtı + 20 davranış testi |
 
 > Bu belgeyi güncelleyen commit ayrıca `docs:` önekiyle geçmişte bulunabilir (kendi hash'ini içeremez).
