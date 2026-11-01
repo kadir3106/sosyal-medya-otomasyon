@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import datetime
 import sys
+import types
 from pathlib import Path
 from unittest.mock import patch
 
@@ -62,11 +63,34 @@ _OPTIONAL_PLATFORM_ATTRS = (
 
 @pytest.fixture
 def isolated(tmp_path, monkeypatch):
-    """Tüm dış etkileri kes: medya dizini geçici, hiçbir platform yapılandırılmamış.
+    """Tüm dış etkileri kes: medya dizini geçici, hiçbir platform yapılandırılmamış, TikTok oturumu yok.
 
     `config` sınıf nitelikleri üzerinden okunuyor; `patch.multiple` çıkışta geri
     alıyor, yani testler birbirinin kimlik bilgilerini sızdırmıyor.
+
+    **TikTok tarayıcı yolu neden enjekte ediliyor (CI'da 17 test bunun için düştü).**
+    Üretim kodu `from app.publishers.tiktok_browser import has_active_tiktok_session`
+    yapıyor ve o modül en tepede `from playwright.sync_api import sync_playwright`
+    çalıştırıyor. `playwright` `video-worker/requirements.txt` içinde **yok** —
+    yerelde kurulu olduğu için testler orada geçti, runner'da
+    `AttributeError: module 'app.publishers' has no attribute 'tiktok_browser'`
+    ile 17 test düştü. Tam olarak `ci.yml`'in uyardığı tuzak.
+
+    Çözüm, gerçek modülün yerine aynı adı taşıyan hafif bir sahte modül koymak:
+    `patch("...tiktok_browser...")` gerçek modülü import etmeye çalışır (ve
+    playwright yoksa patlar), `sys.modules` enjeksiyonu ise üretim kodunun
+    `from ... import` ifadesini sahte modülden karşılar. Üretim kodunu
+    değiştirmiyoruz — testi ortama bağımlı olmaktan çıkarıyoruz.
     """
+    fake_tiktok_browser = types.ModuleType("app.publishers.tiktok_browser")
+    fake_tiktok_browser.has_active_tiktok_session = lambda: False  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "app.publishers.tiktok_browser", fake_tiktok_browser)
+    # `app.publishers` henüz import edilmemişse `from ... import` alt modülü
+    # sys.modules'tan bulur; edilmişse niteliği de düzeltmek gerekir.
+    publishers = sys.modules.get("app.publishers")
+    if publishers is not None:
+        monkeypatch.setattr(publishers, "tiktok_browser", fake_tiktok_browser, raising=False)
+
     monkeypatch.delenv("ALLOW_AUTONOMOUS_PUBLISH", raising=False)
     with patch.multiple(
         config,
@@ -82,13 +106,11 @@ def isolated(tmp_path, monkeypatch):
         agent, "send_message", return_value=True
     ) as send, patch.object(
         agent, "upload_to_youtube", return_value={"status": "success", "video_id": "vid1"}
-    ) as yt, patch(
-        "app.publishers.tiktok_browser.has_active_tiktok_session", return_value=False
     ):
         yield {
             "release": release,
             "send": send,
-            "youtube": yt,
+            "youtube": agent.upload_to_youtube,
             "select": select,
             "tmp_path": tmp_path,
         }

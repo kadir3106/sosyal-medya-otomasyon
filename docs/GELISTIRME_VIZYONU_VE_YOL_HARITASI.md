@@ -1224,6 +1224,49 @@ Kaydetmeye değer, çünkü ikisi de "test geçiyor ama yanlış şeyi sınıyor
 
 Ayrıca ilk denemede `pending_path` düzeltmesini geri alırken yarım bir geri alma yaptım ve dosya `SyntaxError` verdi. Bu bir kanıt değil, kendi hatamdı — temiz geri alma ile tekrarlandı ve `NameError: name 'pending_path' is not defined` gerçekten alındı.
 
+#### 27.4 CI üçüncü kez haklı olarak kırdı: `playwright` requirements'ta yok
+
+20 test yerelde 20/20 geçti, CI'da **17'si ERROR** verdi:
+
+```
+AttributeError: module 'app.publishers' has no attribute 'tiktok_browser'
+```
+
+Kök neden, `ci.yml`'in kendi yorumunda uyardığı tuzağın aynısı:
+
+| Gerçek | Sonuç |
+|---|---|
+| `app/publishers/tiktok_browser.py:17`: `from playwright.sync_api import sync_playwright` | Modül import edilebilmesi için playwright şart |
+| `video-worker/requirements.txt` | playwright **yok** (fastapi, uvicorn, requests, edge-tts, pillow, dotenv, pytest, httpx) |
+| `video-worker/Dockerfile` | yalnızca `pip install -r requirements.txt` |
+| Geliştirici makinesi | playwright kurulu (başka bir projeden) → testler geçti |
+
+Testim `patch("app.publishers.tiktok_browser.has_active_tiktok_session", ...)` kullanıyordu; `patch` hedefi **import etmeye** çalışır, playwright yoksa patlar. Düzeltme: gerçek modül yerine `sys.modules`'a aynı adı taşıyan hafif bir sahte modül enjekte ediliyor — üretim kodu `from ... import` ile onu buluyor, gerçek modül hiç import edilmiyor.
+
+**Bunu bir tahminle değil taklit ile doğruladım.** `sys.modules["playwright"] = None` yapıp (import'u `ModuleNotFoundError` ile durdurur) tam paket koşturuldu: **774 passed, 3 skipped**. Yani suite artık playwright kurulu olmayan bir ortamda da geçiyor. Taklidin gerçekten etkili olduğu ayrıca kanıtlandı: `tiktok_browser` bu ortamda `ModuleNotFoundError: import of playwright.sync_api halted; None in sys.modules` veriyor.
+
+##### Bu, testten büyük bir bulgu: Docker'da TikTok web yolu ölü
+
+Yukarıdaki tablo yalnızca testi ilgilendirmiyor. `docker-compose.yml`'deki tek `video-worker` servisi `./video-worker` bağlamından, yani bu `Dockerfile`'dan build ediliyor — playwright kurulmuyor. `execute_daily_run`'daki şu blok:
+
+```python
+try:
+    from app.publishers.tiktok_browser import has_active_tiktok_session, upload_via_tiktok_browser
+    if has_active_tiktok_session(): ...
+except Exception as tbe:
+    print(f"⚠️ TikTok Web Hatası: {tbe}")
+```
+
+Docker'da her koşuda `ImportError`'a düşüp `except` tarafından yutuluyor: tek satır uyarı basılıyor, tur devam ediyor. Yani **TikTok web otomasyonu konteynerde hiç çalışmadı ve çalışmayacak** — sessizce. TikTok yayını yalnızca resmi API yolu (`TIKTOK_CLIENT_KEY` + token dosyası) varsa mümkün.
+
+Bu maddenin kapsamı dışında (düzeltmek ya `playwright` + tarayıcı bağımlılıklarını imaja eklemek ya da yolu bilinçli olarak devre dışı bırakıp logu netleştirmek demek) — ama artık kayıtlı. Karar verilmeden "TikTok web yedeği var" varsayımı yanlış.
+
+##### Yanlış bir iddiayı geri alıyorum
+
+Bu bölümü ilk yazdığımda "`scripts/` ve `app/` içinde `import django` geçen yerler var, `requirements.txt`'te django yok" diye eklemiştim. **Kontrol ettim: yanlıştı.** `^\s*(from|import)\s+django` deseni 1604 dosyada **0 sonuç** veriyor. Böyle bir import yok; iddia uydurmaydı ve geri alındı.
+
+Doğru olan kısım şu: depoda "hangi import'lar gerçekten kurulu?" sorusunu yanıtlayan bir kontrol yok. `playwright` bunun kanıtlanmış tek örneği (üstteki bölüm). `django` örneği değil.
+
 
 **Sınır (dürüst):** `scripts/` altındaki `daily_autonomous_agent.py` hâlâ tam kapsanmıyor. Gerçek birim testi `execute_daily_run`'ın yan etkilerini (render, yayın, Telegram) teker teker sarmalamayı gerektirir; bugün yalnızca imza/çağrı tutarlılığı ve CLI argüman ayrıştırması kilitli. Ajanın iç mantığı hâlâ test edilmiyor.
 
