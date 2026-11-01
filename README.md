@@ -32,6 +32,30 @@ n8n arayüzü: http://localhost:5678
 
 `main` previously tracked a Playwright TikTok browser profile under `video-output/tiktok_session/` and a backup tarball. Those paths are now gitignored and untracked on this branch, but **anything that was ever public should be rotated**: TikTok session/cookies, TikTok PKCE/OAuth tokens, and any secrets that may have lived inside `backups/*.tar.gz`. History rewrite is optional; rotation is not.
 
+## TikTok yayını: iki yol
+
+**1) Resmi API (varsayılan, ek kurulum yok).** `TIKTOK_CLIENT_KEY` + `TIKTOK_CLIENT_SECRET` + `tiktok-token` volume'undaki token dosyası. Yalnızca `requests` kullanır, playwright gerektirmez.
+
+> ⚠️ `TIKTOK_AUDITED=false` iken API **`SELF_ONLY`** (özel taslak) yayınlar; public yayın için uygulamanın audited olması ve bu bayrağın `true` yapılması gerekir.
+
+**2) Web (Playwright) — opt-in.** Varsayılan imajda **kapalı** (≈400 MB ekler). Public yayın için API audited değilse bu yol gerekir.
+
+```bash
+# İmajı tarayıcı desteğiyle derle
+docker compose build --build-arg INSTALL_BROWSER=1 video-worker
+
+# Bir kez görünür tarayıcıyla giriş yap (headless olmaz)
+python scripts/tiktok_browser_login.py
+
+# Oturumu konteyner volume'una aktar ve doğrula
+python scripts/refresh_tiktok_session.py --upload
+python scripts/refresh_tiktok_session.py --verify
+
+docker compose up -d video-worker
+```
+
+Açılmazsa ne olur: uygulama sorunsuz çalışır; TikTok web adımı atlanır ve Telegram özetinde **"Yayın yok (playwright imajda kurulu değil)"** satırı görünür. Sessizce yutulmaz.
+
 ## n8n Workflow Kurulumu (tek komut)
 
 Workflow'lar `n8n-workflows/` klasöründe versiyon kontrolü altında tutulur ve API üzerinden kurulur:

@@ -1311,6 +1311,141 @@ Eski (tek `except Exception`) sürüm geri konup koşturuldu: **3 test düştü*
 
 **Kalan karar (bilinçli, kapsam dışı):** playwright imaja eklenip bu yol gerçekten çalıştırılsın mı, yoksa TikTok yalnızca resmi API'ye mi bırakılsın? Bu bir ürün kararı — imaja ~400 MB tarayıcı bağımlılığı eklemek ya da bir yeteneği resmen bırakmak anlamına geliyor. Kod artık hangi durumda olduğunu söylüyor; karar verildiğinde tek yerde değişecek.
 
+### 28. Karar verildi: TikTok web yolu opt-in, sessiz değil (2026-11-01)
+
+Madde 27.5'in sonunda bıraktığım kararı verdim ve uyguladım: **playwright varsayılan imaja girmiyor, ama web yolu artık gerçekten çalıştırılabilir — ve çalışmadığında bunu saklamıyor.**
+
+Kararın gerekçesi, ölçülmüş üç gerçek:
+
+| Gerçek | Ölçüm / kanıt |
+|---|---|
+| Resmi API yolu konteynerde **düzgün bağlı** | `tiktok-token:/data/tiktok-token` + `TIKTOK_TOKEN_PATH` → `app/publishers/tiktok.py` yalnızca `requests` kullanıyor, playwright gerektirmiyor |
+| `TIKTOK_AUDITED=false` iken resmi API **public yayınlamıyor** | `tiktok.py:25`: `privacy_level = "PUBLIC_TO_EVERYONE" if audited else "SELF_ONLY"` → public yayın için tarayıcı yolu gerçekten gerekli olabilir |
+| Tarayıcı yolu **~400 MB** ekliyor | playwright + Chromium + sistem bağımlılıkları |
+
+Yani TikTok'u tamamen resmi API'ye bırakmak, uygulama audited değilse **public yayını kaybetmek** olurdu. Tarayıcı yolunu varsayılan yapmak ise günlük otomasyonun hiçbir yerinde gerekmeyen 400 MB'ı her imaja koymak olurdu. Doğru cevap ikisi de değil: **opt-in**.
+
+#### 28.1 Üç kod değişikliği
+
+**a) Tembel import — asıl düzeltme.** `tiktok_browser.py` tepesindeki `from playwright.sync_api import sync_playwright` kaldırıldı, `upload_via_tiktok_browser` içine taşındı:
+
+```python
+try:
+    from playwright.sync_api import sync_playwright
+except ImportError as exc:
+    logger.info("TikTok web yolu atlanıyor: %s", exc)
+    return {"platform": "tiktok", "status": "error", "error": PLAYWRIGHT_MISSING}
+```
+
+Sonucu: modül **her ortamda** import edilebilir, `has_active_tiktok_session()` playwright'e hiç ihtiyaç duymaz, ve eksiklik *istisna* değil *dönüş değeri* olur. Bu önemli, çünkü istisnayı çağıran `except Exception` yine yutardı; dönüş değerini ise çağıran `error == PLAYWRIGHT_MISSING` ile ayırt edebiliyor.
+
+**b) Taşınabilir oturum yolu.** `SESSION_DIR` artık `TIKTOK_SESSION_DIR` env'ini okuyor (yoksa eski repo-içi varsayılana düşüyor, yerel kullanım bozulmuyor).
+
+**c) `.dockerignore` — bu maddenin en beklenmedik bulgusu.** Dosya **hiç yoktu**. Ölçüm:
+
+```
+video-worker build bağlamı: 1462 dosya / 754.4 MB
+  MagicMock/      376 MB
+  video-output/   330 MB
+  tests/, app/, data/  ~9 MB
+```
+
+Hiçbiri imaja girmiyordu (Dockerfile yalnızca 5 yol kopyalıyor) ama **her build'de Docker daemon'a gönderiliyordu**. `.dockerignore` eklendi:
+
+```
+.dockerignore sonrası: 230 dosya / 3.2 MB   (751.2 MB elendi)
+```
+
+Doğrulama: `Dockerfile`'ın `COPY` ettiği 9 kritik yolun (requirements.txt, requirements-browser.txt, pytest.ini, app/main.py, app/config.py, app/publishers/tiktok_browser.py, data, tests/conftest.py, tests/test_daily_autonomous_agent.py) **hiçbiri** elenmiyor. Bunu Docker semantiğine yakın bir doğrulayıcı betikle ölçtüm, sonra sildim.
+
+> Docker daemon bu makinede kapalı, yani `docker build` ile uçtan uca test **edilmedi**. Ölçüm dosya sistemi üzerinden yapıldı; `docker-compose.yml` geçerliliği `yaml.safe_load` ile ayrıca doğrulandı.
+
+#### 28.2 Altyapı: opt-in açma
+
+`Dockerfile`:
+```dockerfile
+ARG INSTALL_BROWSER=0
+COPY requirements-browser.txt .
+RUN pip install --no-cache-dir -r requirements.txt \
+    && if [ "$INSTALL_BROWSER" = "1" ]; then \
+        pip install --no-cache-dir -r requirements-browser.txt \
+        && playwright install --with-deps chromium; \
+    fi
+```
+
+Açmak için: `docker compose build --build-arg INSTALL_BROWSER=1 video-worker`
+
+**Neden ayrı `requirements-browser.txt`:** playwright ana listeye eklenirse `pip install -r requirements.txt` yapan herkes (CI dahil) 400 MB indirir. Ayrı dosya, "kim istiyorsa o açar" demenin en açık yolu.
+
+`docker-compose.yml` — oturum için kalıcı volume:
+```yaml
+volumes:
+  - tiktok-session:/data/tiktok-session
+environment:
+  - TIKTOK_SESSION_DIR=/data/tiktok-session
+```
+
+Cookie'ler **imaja gömülmüyor** (`.gitignore` zaten `video-output/tiktok_session/`'ı dışlıyor, `.dockerignore` da ayrıca). Volume'a bağlanıyor.
+
+#### 28.3 Oturum aktarımı: `scripts/refresh_tiktok_session.py`
+
+`docker cp` çalışan konteyner ister ve volume adı üzerinden yazmayı desteklemez; bu yüzden `docker run --rm -v <volume>:/dst` kullanılıyor.
+
+```
+python scripts/refresh_tiktok_session.py --upload          # yerel oturumu volume'a kopyala
+python scripts/refresh_tiktok_session.py --verify          # iki tarafı karşılaştır
+python scripts/refresh_tiktok_session.py --upload --dry-run # sadece plan
+```
+
+Gerçek çıktı (dry-run, bu makinede):
+```
+Kaynak: ...\video-output\tiktok_session (1015 dosya, 144818.7 KB)
+Hedef volume: test_vol -> /data/tiktok-session
+--dry-run: hicbir sey kopyalanmadi.
+```
+
+Betik **sır yazdırmıyor**: yalnızca dosya sayısı ve KB. Volume adı tahmin edilmiyor, `docker volume ls`'ten `<proje>_tiktok-session` deseniyle soruluyor (`-p` ile proje adı değişebilir).
+
+#### 28.4 Testler: 25 → 31
+
+Yeni dosya `tests/test_tiktok_browser_lazy.py` (6 test):
+
+| Test | Kilitlediği |
+|---|---|
+| `test_module_imports_without_playwright` | `sys.modules["playwright"]=None` iken modül import edilebilmeli |
+| `test_has_active_session_works_without_playwright` | oturum kontrolü playwright'siz çalışmalı |
+| `test_upload_returns_clear_error_when_playwright_missing` | istisna değil, `PLAYWRIGHT_MISSING` dönüşü |
+| `test_session_dir_honours_env` | `TIKTOK_SESSION_DIR` kullanılmalı (volume yolu) |
+| `test_session_dir_defaults_to_repo_video_output` | env yoksa eski varsayılan (yerel bozulmasın) |
+| `test_missing_session_short_circuits_before_playwright` | oturum yoksa playwright hiç çağrılmamalı |
+
+`test_daily_autonomous_agent.py`'deki `test_tiktok_import_error_is_reported_not_swallowed` → `test_tiktok_playwright_missing_is_reported_not_swallowed` olarak güncellendi: artık modül import'u başarılı, eksiklik yükleme dönüşünde.
+
+**Mutasyon kanıtı.** `eager import` geri kondu → **3 test düştü** (`ModuleNotFoundError: import of playwright.sync_api halted`). Testler koruyor.
+
+#### 28.5 Kendi hatalarım
+
+1. **Compose'u bozdum.** Volume mount'unu `environment:` bloğunun içine ekledim; `docker-compose.yml` `yaml.ParserError: expected <block end>, but found '-'` verdi. `yaml.safe_load` ile yakaladım, girintiyi düzelttim.
+2. **Fixture'da eksik alan.** Yeni kod `PLAYWRIGHT_MISSING`'i de import ediyor; sahte modülde yoktu → 4 test `ImportError` ile düştü. Fixture'a eklendi.
+3. **Yorumda yazım hatası:** "playwright'i" yerine "playground'u" yazmışım; grep ile bulup düzelttim.
+
+#### 28.6 Doğrulama
+
+| Kontrol | Sonuç |
+|---|---|
+| `test_tiktok_browser_lazy.py` + `test_daily_autonomous_agent.py` | **31 passed** |
+| Tam paket, CI taklidinde (`playwright` yok) | **785 passed, 3 skipped** |
+| `ruff --select E9,F63,F7,F82` | 0 ihlal |
+| `docker-compose.yml` | geçerli; 5 volume, mount doğru yerde |
+| Build bağlamı | **754.4 MB → 3.2 MB**; 9 kritik yol korunuyor |
+| `refresh_tiktok_session.py --dry-run` | çalışıyor, sır yazdırmıyor |
+
+**Bilinen sınır:** `docker build` gerçekten koşulmadı (daemon kapalı). `INSTALL_BROWSER=1` yolu bu makinede test edilmedi; CI'da da koşmuyor (400 MB indirmemek için bilinçli). İlk kez kullanılırken `docker compose build --build-arg INSTALL_BROWSER=1` çıktısı gözle doğrulanmalı.
+
+
+
+
+
 
 **Sınır (dürüst):** `scripts/` altındaki `daily_autonomous_agent.py` hâlâ tam kapsanmıyor. Gerçek birim testi `execute_daily_run`'ın yan etkilerini (render, yayın, Telegram) teker teker sarmalamayı gerektirir; bugün yalnızca imza/çağrı tutarlılığı ve CLI argüman ayrıştırması kilitli. Ajanın iç mantığı hâlâ test edilmiyor.
 
@@ -1357,6 +1492,7 @@ Sonuç: **754 passed, 3 skipped** (madde 26'daki 750 + 4 yeni), yerelde 1 m 57 s
 | `fae1fe1` | Otonom yayın turu için 20 davranış testi + 4 mutasyon kanıtı (madde 27.2) |
 | `a9296ab` | Testler playwright olmadan da geçsin — CI 17 ERROR verdi (madde 27.4) |
 | `—` | TikTok web yolu üç durumu ayırıyor; sessiz `except` kaldırıldı (madde 27.5) |
+| `—` | TikTok web yolu opt-in: tembel import + `.dockerignore` (754 MB → 3 MB) + oturum aracı (madde 28) |
 | `—` | Madde 27.1–27.3: üretim logunda 38 çökme kanıtı + 20 davranış testi |
 
 > Bu belgeyi güncelleyen commit ayrıca `docs:` önekiyle geçmişte bulunabilir (kendi hash'ini içeremez).

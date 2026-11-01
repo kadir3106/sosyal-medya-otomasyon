@@ -1,0 +1,49 @@
+# `video-worker` build bağlamı (`docker-compose.yml` -> `build: ./video-worker`).
+# Bu dosya yokken ölçülen bağlam: 1455 dosya, **716 MB** — ve içinde
+# `MagicMock/` (376 MB) ile `video-output/` (330 MB) vardı. Hiçbiri imaja
+# girmiyordu ama her build'de Docker daemon'a gönderiliyordu.
+# `Dockerfile` yalnızca `requirements.txt`, `app/`, `data/`, `tests/`,
+# `pytest.ini` kopyalıyor; gerisi boşa giden trafik.
+#
+# Not: `video-output/` bağlamın kökünde DEĞİL (repo kökünde), yukarıdaki
+# `video-output/` satırı yalnızca bu dizin içinde oluşmuş bir kopyayı hedefler.
+# Oturum cookie'leri (`video-output/tiktok_session/`) hiçbir koşulda imaja
+# girmemeli — bu yüzden açıkça dışlanıyor.
+
+# Python önbellekleri / sanal ortamlar
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Test ve hata ayıklama artıkları
+tests-*/
+_htmlcov/
+.coverage
+coverage.xml
+.pytest_report/
+MagicMock/
+video-output/
+*.log
+
+# Yerel geçici betikler (`_tmp_*` deseni bu depoda yaygın)
+_tmp_*
+_tmp*
+
+# Sistem / editör artıkları
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Sırlar: hiçbir koşulda imaja girmemeli
+.env
+.env.*
+!.env.example
+*.pem
+*_token.json
+tiktok_session/

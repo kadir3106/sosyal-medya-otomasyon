@@ -1,0 +1,17 @@
+# TikTok web (Playwright) yolu için EK bağımlılıklar — ana imaja DAHİL DEĞİL.
+#
+# Neden ayrı dosya: `playwright` + Chromium imajı ~400 MB büyütüyor ve günlük
+# otomasyonun hiçbir yerinde gerekmiyor. Resmi TikTok API (`app/publishers/tiktok.py`)
+# requests ile çalışıyor ve bu dosyaya ihtiyaç duymuyor.
+#
+# Kullanım (imajı gerçekten bu yolla üretecekseniz):
+#
+#   docker compose build --build-arg INSTALL_BROWSER=1 video-worker
+#
+# Sonra oturumu konteynere aktarın:
+#   python scripts/refresh_tiktok_session.py --upload
+#
+# Kurulmazsa ne olur: uygulama çalışır; `upload_via_tiktok_browser` açık bir
+# mesajla hata döner ("playwright kurulu değil..."), tur düşmez ve operatör
+# Telegram özetinde "Yayın yok (playwright imajda kurulu değil)" görür.
+playwright==1.49.0

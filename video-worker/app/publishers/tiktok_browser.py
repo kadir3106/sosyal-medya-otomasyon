@@ -4,6 +4,14 @@ TikTok Web Otomatik Yükleme Modülü (Playwright)
 Resmi API onay süreçlerine ve kurumsal bürokrasiye gerek kalmadan,
 kullanıcının yerel tarayıcı oturumu üzerinden TikTok Creator Center'a
 1080p dikey videoları tam otomatik olarak yükler.
+
+`playwright` BİLİNÇLİ olarak tembel import ediliyor. Eskiden modülün tepesinde
+`from playwright.sync_api import sync_playwright` vardı; playwright
+`requirements.txt`'te olmadığı için modül hiç import edilemiyordu ve çağıran
+taraf bunu ancak `ImportError` ile anlıyordu. Artık modül her zaman import
+edilebilir; eksik olan şey `ImportError` olarak `upload_via_tiktok_browser`
+içinden, açık bir mesajla döner. Böylece "playwright yok" durumu beklenen bir
+yapılandırma durumu olarak ele alınabilir (çağıran bunu ayırt edebilir).
 """
 
 from __future__ import annotations
@@ -14,13 +22,25 @@ import time
 from pathlib import Path
 from typing import Any
 
-from playwright.sync_api import sync_playwright
-
 logger = logging.getLogger(__name__)
 
-SESSION_DIR = Path(__file__).resolve().parent.parent.parent.parent / "video-output" / "tiktok_session"
-if not SESSION_DIR.parent.exists():
-    SESSION_DIR = Path(__file__).resolve().parent.parent.parent / "video-output" / "tiktok_session"
+# Oturum dizini: TIKTOK_SESSION_DIR env'i varsa o, yoksa eski varsayılan.
+# Eski varsayılan repo kökündeki `video-output/tiktok_session`; konteyner içinde
+# orası YOK. Bu yüzden compose'da TIKTOK_SESSION_DIR=/data/tiktok-session
+# verilip kalıcı bir volume'a bağlanıyor (cookie'ler imaja gömülmemeli).
+_ENV_SESSION_DIR = os.environ.get("TIKTOK_SESSION_DIR", "").strip()
+if _ENV_SESSION_DIR:
+    SESSION_DIR = Path(_ENV_SESSION_DIR)
+else:
+    SESSION_DIR = Path(__file__).resolve().parent.parent.parent.parent / "video-output" / "tiktok_session"
+    if not SESSION_DIR.parent.exists():
+        SESSION_DIR = Path(__file__).resolve().parent.parent.parent / "video-output" / "tiktok_session"
+
+#: Playwright yoksa (imajda kurulu değilse) döndürülen açık mesaj.
+PLAYWRIGHT_MISSING = (
+    "playwright kurulu değil — TikTok web yolu bu ortamda devre dışı. "
+    "TikTok yayını için resmi API kullanın (TIKTOK_CLIENT_KEY + token)."
+)
 
 
 def has_active_tiktok_session() -> bool:
@@ -38,6 +58,15 @@ def upload_via_tiktok_browser(
     headless: bool = True,
 ) -> dict[str, Any]:
     """Playwright ile TikTok Creator Center üzerinden videoyu yükler ve yayınlar."""
+    # Tembel import: playwright imajda yoksa modül import'u değil, YALNIZCA bu
+    # çağrı başarısız olur — ve açık bir mesajla. `has_active_tiktok_session`
+    # playwright'e ihtiyaç duymadığı için o hâlâ her ortamda çalışır.
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError as exc:
+        logger.info("TikTok web yolu atlanıyor: %s", exc)
+        return {"platform": "tiktok", "status": "error", "error": PLAYWRIGHT_MISSING}
+
     if not has_active_tiktok_session():
         return {
             "platform": "tiktok",

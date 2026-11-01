@@ -24,7 +24,17 @@ RUN if [ "$INSTALL_FFMPEG" = "1" ]; then \
 
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# TikTok web (Playwright) yolu OPT-IN. Neden varsayilan kapali: playwright +
+# Chromium imaji ~400 MB buyutuyor ve gunluk otomasyonun hicbir yerinde
+# gerekmiyor — resmi TikTok API (`app/publishers/tiktok.py`) yeterli.
+# Acmak icin:  docker compose build --build-arg INSTALL_BROWSER=1 video-worker
+ARG INSTALL_BROWSER=0
+COPY requirements-browser.txt .
+RUN pip install --no-cache-dir -r requirements.txt \
+    && if [ "$INSTALL_BROWSER" = "1" ]; then \
+        pip install --no-cache-dir -r requirements-browser.txt \
+        && playwright install --with-deps chromium; \
+    fi
 
 COPY app ./app
 COPY data ./data

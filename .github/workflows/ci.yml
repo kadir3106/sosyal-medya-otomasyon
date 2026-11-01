@@ -37,7 +37,7 @@ jobs:
       # No .env is present here, which is the point: tests/conftest.py keeps the suite
       # hermetic (legacy pipeline mode, stubbed refine_script, external network blocked,
       # retries disabled). Verified 754 passed, 3 skipped in ~1 m 57 s on this runner.
-      # Updated after adding behaviour tests for the autonomous agent: 779 passed,
+      # Updated after making the TikTok browser path opt-in: 785 passed,
       # 3 skipped, ~1 m 02 s locally — re-measure if this drifts again.
       - name: Run tests
         run: pytest tests -q

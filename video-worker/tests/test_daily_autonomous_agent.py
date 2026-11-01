@@ -83,6 +83,9 @@ def isolated(tmp_path, monkeypatch):
     değiştirmiyoruz — testi ortama bağımlı olmaktan çıkarıyoruz.
     """
     fake_tiktok_browser = types.ModuleType("app.publishers.tiktok_browser")
+    # `PLAYWRIGHT_MISSING` da üretim modülünden import ediliyor; sahte modülde
+    # yoksa `from ... import` ImportError verir ve test yanlış dala düşer.
+    fake_tiktok_browser.PLAYWRIGHT_MISSING = "playwright kurulu değil — test"  # type: ignore[attr-defined]
     fake_tiktok_browser.has_active_tiktok_session = lambda: False  # type: ignore[attr-defined]
     fake_tiktok_browser.upload_via_tiktok_browser = lambda **kw: {  # type: ignore[attr-defined]
         "platform": "tiktok",
@@ -383,6 +386,7 @@ def _tiktok_status(isolated) -> str:
 def _inject_tiktok(monkeypatch, *, session: bool, upload) -> None:
     """Gerçek `tiktok_browser` yerine sahte modül koy (playwright import edilmesin)."""
     fake = types.ModuleType("app.publishers.tiktok_browser")
+    fake.PLAYWRIGHT_MISSING = "playwright kurulu değil — test"  # type: ignore[attr-defined]
     fake.has_active_tiktok_session = lambda: session  # type: ignore[attr-defined]
     fake.upload_via_tiktok_browser = upload  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "app.publishers.tiktok_browser", fake)
@@ -391,17 +395,29 @@ def _inject_tiktok(monkeypatch, *, session: bool, upload) -> None:
         monkeypatch.setattr(publishers, "tiktok_browser", fake, raising=False)
 
 
-def test_tiktok_import_error_is_reported_not_swallowed(isolated, monkeypatch):
-    """playwright yoksa: tur devam eder, ama rapor 'web yolu devre dışı' der.
+def test_tiktok_playwright_missing_is_reported_not_swallowed(isolated, monkeypatch):
+    """playwright yoksa: tur devam eder, rapor 'playwright imajda kurulu değil' der.
 
-    ÖNEMLİ: bu, üretimdeki gerçek durum. `video-worker/requirements.txt` ve
-    `Dockerfile` playwright kurmuyor; yani konteynerde `ImportError` her koşuda
-    oluşuyor. Eskiden `except Exception` bunu yutup yalnızca bir uyarı
-    basıyordu — operatör TikTok'un neden yayınlanmadığını göremiyordu.
+    ÖNEMLİ: bu, üretimdeki GERÇEK varsayılan durum. `playwright`
+    `requirements.txt`'te değil; `Dockerfile` onu yalnızca
+    `INSTALL_BROWSER=1` build arg'ı verilirse kuruyor. Yani varsayılan imajda
+    oturum hiç olsa bile web yolu çalışmaz.
+
+    Tasarım (madde 28): `tiktok_browser` playwright'i TEMBEL import ediyor, bu
+    yüzden modül import'u başarılı olur; eksiklik `upload_via_tiktok_browser`
+    çağrısında `PLAYWRIGHT_MISSING` mesajıyla döner. Bu test o sözleşmeyi
+    kilitliyor — mesaj değişirse özet satırı da değişmeli.
     """
     monkeypatch.setenv("ALLOW_AUTONOMOUS_PUBLISH", "true")
-    # Import'u CI'daki gibi başarısız yap: sys.modules'ta None -> ImportError.
-    monkeypatch.setitem(sys.modules, "app.publishers.tiktok_browser", None)
+    _inject_tiktok(
+        monkeypatch,
+        session=True,  # oturum VAR: eksiklik yalnızca playwright
+        upload=lambda **kw: {
+            "platform": "tiktok",
+            "status": "error",
+            "error": "playwright kurulu değil — test",
+        },
+    )
 
     # Özet metni yalnızca Telegram açıkken gönderiliyor.
     with patch.multiple(config, TELEGRAM_BOT_TOKEN="tok", TELEGRAM_CHAT_ID="42"), patch(
@@ -410,7 +426,7 @@ def test_tiktok_import_error_is_reported_not_swallowed(isolated, monkeypatch):
         result = _run()
 
     assert result is not None, "TikTok yolu turu düşürmemeli"
-    assert "devre dışı" in _tiktok_status(isolated)
+    assert "playwright imajda kurulu değil" in _tiktok_status(isolated)
 
 
 def test_tiktok_missing_session_is_reported_quietly(isolated, monkeypatch):

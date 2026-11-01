@@ -246,28 +246,25 @@ async def execute_daily_run(use_trend: bool = False, director_mode: bool = False
 
     # 2. Resmi API yoksa veya başarısız olduysa Web Tarayıcı Otomasyonunu dene (Split-Screen)
     if not any("TikTok" in s and "Yayında" in s for s in platforms_status):
-        # Üç ayrı başarısızlık durumu var ve önceden hepsi tek `except Exception`
-        # satırına düşüyordu:
-        #   1. playwright imajda YOK  -> modül import bile edilemez
-        #   2. oturum yok             -> beklenen durum, atlanır
-        #   3. yükleme başarısız      -> gerçek hata
-        # `tiktok_browser` en tepede `from playwright.sync_api import ...` yapıyor
-        # ama playwright ne `requirements.txt` ne `Dockerfile` içinde var; ayrıca
-        # oturum dizini `video-output/` altında ve o dizin konteynere mount
-        # edilmiyor. Yani konteynerde bu yol HİÇBİR ZAMAN çalışmadı — sessizce.
+        # 1. playwright imajda YOK  -> modül import edilir ama yükleme açık mesajla döner
+        # 2. oturum yok             -> beklenen durum, atlanır
+        # 3. yükleme başarısız      -> gerçek hata
+        # `tiktok_browser` playwright'i tembel import ettiği için modül artık her
+        # ortamda import edilebilir; eksiklik yükleme çağrısında ortaya çıkar.
+        # Oturum dizini `video-output/` altında ve konteynerde TIKTOK_SESSION_DIR
+        # ile ayrı bir volume'a bağlanıyor — cookie'ler imaja gömülmüyor.
         # Artık üç durum ayrı ayrı raporlanıyor.
         try:
             from app.publishers.tiktok_browser import (
+                PLAYWRIGHT_MISSING,
                 has_active_tiktok_session,
                 upload_via_tiktok_browser,
             )
         except ImportError as mie:
-            print(
-                "⚠️ TikTok web yolu KULLANILAMIYOR (playwright imajda kurulu değil): "
-                f"{mie}\n"
-                "   → TikTok yayını için resmi API gerekir (TIKTOK_CLIENT_KEY + token dosyası)."
-            )
-            platforms_status.append("🎵 *TikTok:* ⚠️ Yayın yok (web yolu imajda devre dışı)")
+            # Modül import'u yalnızca paket yolu bozuksa düşer (playwright artık
+            # tembel). Yine de savunma amaçlı: tur asla düşmemeli.
+            print(f"⚠️ TikTok web yolu KULLANILAMIYOR: {mie}")
+            platforms_status.append("🎵 *TikTok:* ⚠️ Yayın yok (web modülü yok)")
         else:
             if not has_active_tiktok_session():
                 print(
@@ -288,6 +285,12 @@ async def execute_daily_run(use_trend: bool = False, director_mode: bool = False
                     if tb_res.get("status") == "success":
                         print(f"✅ TikTok (Web): Yayında")
                         platforms_status.append(f"🎵 *TikTok:* Yayında (Web) ✅")
+                    elif tb_res.get("error") == PLAYWRIGHT_MISSING:
+                        # Oturum var ama playwright yok: yapılandırma sorunu.
+                        print(f"⚠️ {PLAYWRIGHT_MISSING}")
+                        platforms_status.append(
+                            "🎵 *TikTok:* ⚠️ Yayın yok (playwright imajda kurulu değil)"
+                        )
                     else:
                         print(f"⚠️ TikTok Web Uyarısı: {tb_res.get('error')}")
                         platforms_status.append(f"🎵 *TikTok:* ⚠️ {tb_res.get('error', '')[:40]}")
