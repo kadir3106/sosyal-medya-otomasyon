@@ -1139,12 +1139,18 @@ Operatör Telegram'dan "yeni video yap" yazdığında bot çöküyordu. Dosyanı
 
 Ölçüm: `--select E9,F63,F7,F82` (yalnızca "bu kod çalışmaz" sınıfı) depoda **0 ihlal** veriyor. Stil kuralları (`E501`, `I001`…) ise 1000'i aşkın ihlal verirdi; onları eklemek kapıyı gürültüye boğup gerçek hatayı gizlerdi. Bu yüzden kural kümesi bilinçli olarak dar tutuldu.
 
-| Kapı | Kapsam | Sonuç |
-|---|---|---|
-| `ruff --select E9,F63,F7,F82` | `video-worker/app`, `video-worker/tests`, `scripts` | 0 ihlal |
-| `ruff --select B023` | `video-worker/app`, `scripts` | 0 ihlal (1 düzeltme sonrası; aşağıda) |
+| Kapı | Kapsam | Sonuç | CI'da mı |
+|---|---|---|---|
+| `ruff --select E9,F63,F7,F82` | `video-worker/app`, `video-worker/tests`, `scripts` | 0 ihlal | **Evet** (`lint` işi) |
+| `ruff --select B023` | `video-worker/app`, `scripts` | 0 ihlal (1 düzeltme sonrası; aşağıda) | Hayır |
 
-`ci.yml`'e `lint` işi eklendi (`ruff==0.16.5`, `--isolated`). `--isolated` şart: geliştiricinin makinesindeki `ruff.toml` sonucu değiştirirse "yerelde geçti, CI'da kaldı" olur — bu depoda bu tuzağa zaten düşülmüştü.
+**B023 neden kapıya eklenmedi — dürüst cevap.** `B023` `video-worker/tests` içinde **6 ihlal** veriyor: `test_publish_concurrency.py` (4: `barrier`, `target`, `lock`, `errors`) ve `test_documentary_v2_topic_review.py` (2: `response`, `titles`). Bunlar madde 27'nin konusu değil, önceden vardı.
+
+> Bu 6 ihlal `ci.yml`'in lint komutunu **etkilemez**: orada yalnızca `E9,F63,F7,F82` seçili. Ama ilk yazımda tablo `B023`'ü de bir "kapı" gibi listeliyordu — okuyucu CI'da zorlandığını sanabilirdi. Düzeltildi: tabloya "CI'da mı" kolonu eklendi.
+
+Bu ihlallerin gerçek risk olup olmadığı ayrı bir iş: `test_publish_concurrency.py:186`'daki `worker` fonksiyonu döngü içinde tanımlanıp `target`/`lock`/`barrier`/`errors`'u serbest değişken olarak yakalıyor. Fonksiyon döngü içinde hemen thread'lere verilip `join()` edildiği için bugün doğru davranıyor — ama aynı sınıf hata (geç bağlama) ileride sessiz bir yarış testini bozabilir. Kapsam dışı bırakıldı, kayda geçirildi.
+
+`ci.yml`'e `lint` işi eklendi (`ruff==0.16.5`, `--isolated`). Yalnızca `E9,F63,F7,F82` — yani "bu kod çalışmaz" sınıfı. Genişletmek, 6'sı yukarıda olmak üzere mevcut ihlaller yüzünden kapıyı kırmızıya düşürürdü; kapıyı ilk günden kırmızı başlatmak, kapıyı hiç koymamakla aynıdır. `--isolated` şart: geliştiricinin makinesindeki `ruff.toml` sonucu değiştirirse "yerelde geçti, CI'da kaldı" olur — bu depoda bu tuzağa zaten düşülmüştü.
 
 #### Üçüncü bulgu — `B023`: geç bağlanan döngü değişkeni
 
@@ -1158,6 +1164,66 @@ Operatör Telegram'dan "yeni video yap" yazdığında bot çöküyordu. Dosyanı
 - `director_mode`: gerçek çağrı video üretip yayınlar, testte koşulamaz. Bunun yerine AST ile **imza ↔ çağrı** karşılaştırılıyor. Parametre silinince test `AssertionError: imzada olmayan argüman: {'director_mode'}` verdi — doğrulandı.
 
 Yani testler sadece "geçmiyor", hata geri gelince düşüyor. Bu ayrımı yapmadan yazılan test, hiçbir şeyi kilitlemez.
+
+#### 27.1 Bu çökme teorik değildi: üretim logunda 38 kez yaşandı
+
+Yukarıdaki tabloyu yazdıktan sonra `video-output/daily_scheduler.log`'a baktım — ve hatanın canlıda ne kadar sürdüğünü ölçtüm:
+
+| Ölçüm | Değer |
+|---|---|
+| `Traceback` sayısı | **38** |
+| Bunlardan `unexpected keyword argument 'director_mode'` | **38** (hepsi) |
+| Başarılı tur (`GÜNLÜK OTONOM İŞLEM TAMAMLANDI`) | **2** |
+| Zamanlayıcının yakaladığı hata (`Günlük çalıştırma hatası`) | **0** |
+
+Üç sonuç:
+
+1. **38/38 aynı hata.** Tek bir kök neden, 38 ayrı başarısız koşu. Log 2026-09-16'dan itibaren tutuluyor; yani çökme haftalarca sürdü.
+2. **Başarılı tur 2.** Her 38 denemede video üretimi hiç başlamadı — `execute_daily_run` argüman bağlamasında, yani ilk satırda ölüyordu.
+3. **Zamanlayıcının kendi `except`'i 0 kez tetiklendi.** Bu en öğretici olan: çökme `run_scheduler_loop`'un `try/except`'ine *hiç* girmemiş. Çünkü hata `asyncio.run(execute_daily_run())` çağrısına varmadan, **çağrı ifadesinin kendisinde** oluşuyordu. Yani "hata yakalama var" diye düşünülen yer, hatayı görmüyordu bile.
+
+> Bu, "`try/except` var mı?" sorusunun doğru soru olmadığını gösteriyor. Doğru soru: *hata hangi kapsamda oluşuyor?* Argüman bağlama (binding) hataları her zaman `try` bloğunun **dışında**, çağrı ifadesinde oluşur.
+
+#### 27.2 Davranış testleri: 20 test, 4 mutasyonla doğrulanmış
+
+`tests/test_natural_message_crashes.py` yalnızca "imza ↔ çağrı" tutarlılığını kilitliyordu — iyi bir kapı, ama bu betiğin *davranışını* hiç sınamıyordu. Bu betik YouTube'a `public` yüklüyor: geri alınamaz. `tests/test_daily_autonomous_agent.py` (20 test) eklendi.
+
+Testlerin odağı **yanlış yayın yapmamak**. Her senaryo şu soruyu soruyor: hata / iptal / belirsizlik durumunda platformlara bir şey gidiyor mu?
+
+| Kilitlenen davranış | Neden pahalı |
+|---|---|
+| `ALLOW_AUTONOMOUS_PUBLISH != "true"` → hiç yayın yok | Bayrak unutulursa sessizce public yayın başlar |
+| `"1"`, `"yes"`, `"TRUE "` (boşluklu) → yayın yok | Kod `.lower() != "true"`; yazım hatası *güvenli* tarafta kalmalı. Parametrik: 6 değer |
+| `"TRUE"` → yayın var | Kapı tamamen kapanırsa özellik ölü |
+| Üretim çökerse `release_topic` çağrılır | Konu "kullanıldı" sayılır, havuz sessizce tükenir |
+| Yönetmen iptali → `None` döner, yayın yok | İptal edilen video kanala giderse itibar hasarı |
+| Yönetmen zaman aşımı → yayın var | Telegram mesajı "yanıt gelmezse otomatik yayınlanır" diyor; davranış sözleşmeye uygun |
+| Yönetmen onayı → yayın var | Mutlu yol |
+| Telegram token yok + `--director` → yayın devam eder | **Tehlikeli**: onay alınamıyor ama yine de yayınlanıyor. Kilitlendi ki bilinçli değişiklik gerektirsin |
+| Zamanlayıcı günde en fazla 1 tur | Kontrol olmasa 30 sn'de bir = günde 2880 video |
+| Zamanlayıcı hata sonrası yeniden dener | `last_run_day` başarısızlıkta işaretlenirse tek hata tüm günü öldürür |
+| Saat gelmeden çalışmaz | Erken yayın |
+
+**Kilidin kilidi.** Testlerin gerçekten koruduğunu kanıtlamak için 4 mutasyon uygulandı ve her biri yakalandı:
+
+| Mutasyon | Düşen test |
+|---|---|
+| `if os.environ.get(...) != "true"` → `if False:` | 7 test |
+| `release_topic(...)` → `pass` | `test_generation_failure_releases_topic_and_raises` |
+| `last_run_day = today_str` → `pass` | `test_scheduler_runs_at_most_once_per_day` |
+| İptal dalındaki `return None` → `pass` | `test_director_cancel_returns_none_and_never_publishes` |
+
+Dördü de düştü. Mutasyondan sonra kaynak `git diff` ile doğrulandı: **kalıntı yok**.
+
+#### 27.3 Test yazarken iki kez yanlış yaptım — ve testler yakaladı
+
+Kaydetmeye değer, çünkü ikisi de "test geçiyor ama yanlış şeyi sınıyor" sınıfı:
+
+1. **`cancel:auto_x` hiçbir işle eşleşmiyordu.** `job_id` `datetime.now()`'dan üretiliyor (`auto_%Y%m%d_%H%M%S`); callback verisini sabit yazınca döngü zaman aşımına düşüyordu — yani test "geçiyordu" ama iptal dalını hiç çalıştırmamıştı. Düzeltme: saat sabitlendi (`FROZEN_JOB_ID`) **ve** saatin gerçekten o kimliği ürettiğini doğrulayan ayrı bir test eklendi. Bu ikinci test olmadan ilki sessizce yanlış senaryo koşabilirdi.
+2. **Uyku sayacı bir fazlaydı.** Döngü `sleep` → kontrol → `run` sırasıyla dönüyor. 2 tur beklerken 3. tur da başlamıştı; testin ilk yazımı yanlış sayıya bakıyordu. Sayı, döngünün gerçek sırasına göre düzeltildi.
+
+Ayrıca ilk denemede `pending_path` düzeltmesini geri alırken yarım bir geri alma yaptım ve dosya `SyntaxError` verdi. Bu bir kanıt değil, kendi hatamdı — temiz geri alma ile tekrarlandı ve `NameError: name 'pending_path' is not defined` gerçekten alındı.
+
 
 **Sınır (dürüst):** `scripts/` altındaki `daily_autonomous_agent.py` hâlâ tam kapsanmıyor. Gerçek birim testi `execute_daily_run`'ın yan etkilerini (render, yayın, Telegram) teker teker sarmalamayı gerektirir; bugün yalnızca imza/çağrı tutarlılığı ve CLI argüman ayrıştırması kilitli. Ajanın iç mantığı hâlâ test edilmiyor.
 
@@ -1199,6 +1265,9 @@ Sonuç: **754 passed, 3 skipped** (madde 26'daki 750 + 4 yeni), yerelde 1 m 57 s
 | `96ca81e` | Sır tarayıcısına `--history` modu + baseline + CI `history-scan` işi (madde 26) |
 | `593ec70` | Untracked dosyalar da taranıyor: commit öncesi kapı gerçekten çalışıyor |
 | `f327239` | Bayat sayılar ölçümle hizalandı (test süresi, tarama süresi) |
+| `3974684` | Madde 26.1: iki kez kırılan CI'ın dersleri belgelendi |
+| `24ae21d` | İki sessiz çökme düzeltildi (`--director`, `pending_path`) + ruff kapısı (madde 27) |
+| `—` | Madde 27.1–27.3: üretim logunda 38 çökme kanıtı + 20 davranış testi |
 
 > Bu belgeyi güncelleyen commit ayrıca `docs:` önekiyle geçmişte bulunabilir (kendi hash'ini içeremez).
 
