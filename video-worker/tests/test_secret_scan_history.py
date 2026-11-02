@@ -22,8 +22,13 @@ from secret_scan import (  # noqa: E402
     finding_key,
     load_baseline,
     scan_path,
+    scan_text,
     scan_text_values,
 )
+
+# Test fixture'ları dinamik kuruluyor: literal sır yazılsaydı tarayıcı bu dosyayı
+# da bulgu sayardı (test_secret_scan.py'de aynı gerekçe ölçülmüştü).
+_RANDOM = "abcdefghijklmnopqrstuvwxyz0123456789"
 
 
 # --- Yol tabanlı dedektör: tarayıcı oturum dosyaları -----------------------
@@ -284,6 +289,58 @@ def test_broken_archive_does_not_crash_and_still_flags_path():
     """
     assert secret_scan.read_archive_texts("bozuk.tar.gz", b"not an archive") == []
     assert "archive_file" in [h[0] for h in scan_path("bozuk.tar.gz")]
+
+
+def test_nested_archive_is_opened():
+    """Arşiv içindeki arşiv de açılmalı.
+
+    Ölçülen gerçek durum: `backups/otomasyon-yedek-*.tar.gz` → `n8n-data.tar`
+    → `./config` (n8n encryptionKey). İlk sürüm iç arşivi "ikili" diye atlıyor
+    ve dosya içindeki sırrı hiç görmüyordu.
+    """
+    inner = _tar_gz({"config": b'{"encryptionKey":"%s"}' % _RANDOM[:32].encode()})
+    outer = _tar_gz({"n8n-data.tar": inner})
+
+    texts = secret_scan.read_archive_texts("backups/yedek.tar.gz", outer)
+    joined = "\n".join(text for _, text in texts)
+
+    assert "encryptionKey" in joined, "iç arşiv açılmadı"
+    # Üye yolu iki katmanı da göstermeli: hangi dosyada olduğu kaybolmasın.
+    assert any(path.count("!") == 2 for path, _ in texts)
+
+
+def test_json_secret_field_is_detected():
+    """JSON alanındaki sır yakalanmalı (`KEY = "..."` biçimi değil)."""
+    key = _RANDOM[:32]
+    hits = scan_text('{"encryptionKey":"%s"}' % key)
+    assert [h[0] for h in hits] == ["json_secret_field"]
+
+
+def test_json_secret_field_ignores_short_and_sentinel_values():
+    """Kısa değer ve "yazılmamalı" işareti bulgu değil."""
+    assert scan_text('{"api_key":"short"}') == []
+    assert scan_text('{"access_token":"should-not-be-written"}') == []
+
+
+def test_deeply_nested_archive_is_reported_not_silently_skipped():
+    """Derinlik sınırı aşılırsa sessizce geçilmez — açılamayan arşiv bildirilir.
+
+    "Derine inmedim" bilgisi operatöre ulaşmazsa tarayıcı yine kördür; bu,
+    düzeltmeye çalıştığımız hatanın ta kendisi olurdu.
+    """
+    payload = _tar_gz({"x.txt": b"merhaba"})
+    # Sınırın bir fazlası katman: en dış + (MAX_ARCHIVE_DEPTH) iç içe.
+    for _ in range(secret_scan.MAX_ARCHIVE_DEPTH):
+        payload = _tar_gz({"inner.tar.gz": payload})
+
+    secret_scan.reset_unopened_archives()
+    secret_scan.read_archive_texts("dis.tar.gz", payload)
+
+    assert secret_scan.unopened_archives(), "derin arşiv sessizce atlandı"
+    path, depth = secret_scan.unopened_archives()[0]
+    assert depth >= secret_scan.MAX_ARCHIVE_DEPTH
+    assert path.startswith("dis.tar.gz!")
+
 
 
 def test_history_scan_opens_archives(monkeypatch, capsys):

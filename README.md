@@ -76,7 +76,21 @@ Blast radius is bounded but real: the store holds **exactly one** credential, **
 
 > Reading `database.sqlite` alone shows **0** credentials — n8n runs `journal_mode=wal` and the row lives in `database.sqlite-wal`. The first measurement of this leak made exactly that mistake.
 
-> The scanner now **opens** committed archives (`.zip`, `.tar.gz`, …) instead of skipping binary blobs — the tarball above was invisible to it until 2026-11-02. It also flags every archive path as a finding on its own, so an archive it cannot open is never reported as "clean". It is still **not recursive**: a `.tar.gz` wrapping another archive is not unpacked automatically.
+> The scanner now **opens** committed archives (`.zip`, `.tar.gz`, …) instead of skipping binary blobs — the tarball above was invisible to it until 2026-11-02. It also flags every archive path as a finding on its own, so an archive it cannot open is never reported as "clean".
+>
+> **It is now recursive** (2026-11-02, `MAX_ARCHIVE_DEPTH=3`). The tarball above wrapped `n8n-data.tar`, and the old reader skipped it as binary — so `./config`, the 56-byte file holding the n8n `encryptionKey`, produced **zero** findings. Measured before/after:
+
+| Layer | Before | After |
+| --- | --- | --- |
+| `backups/*.tar.gz` → `n8n-data.tar` | inner archive never opened | opened (2 levels) |
+| `./config` (`encryptionKey`, 56 B) | **0 findings** | caught by `json_secret_field` |
+| `Cookies` / `Login Data` inside an archive | invisible | `browser_cookies` finding |
+| archive deeper than the limit | silently skipped | `nested_archive_unopened` finding |
+
+> A new `json_secret_field` pattern was needed because `assigned_secret` only matched Python-style `KEY = "..."` and missed the JSON form entirely. Two test files went red on the first run — both were sentinels (`SHOULD_NOT_APPEAR_IN_SCHEMA`, `should-not-be-written`), not secrets. Rather than baseline them (a baseline means *accepted real finding*), a narrow `SENTINEL_SUBSTRINGS` rule was added; the pattern itself was not weakened.
+>
+> `.gitignore` hides `*.tar.gz` and `*.bundle`, which is correct — but it also means **neither `--history` nor the HEAD sweep can see the secrets inside them**. A separate measurement covers that: `verify_leak_rotation.py` reports stray backup copies on disk. The 130 MB bundle still holds `video-output/tiktok_session/` (**941 objects**, incl. `Network/Cookies`) with `sessionid` valid to **2027-03-16**. Deleting it is deliberately *not* automated: the bundle is the only path back to the pre-rewrite history, so a mistimed script would destroy it irrecoverably. The script measures presence only and says so in its `CAPABILITIES` table.
+
 
 
 ## TikTok yayını: iki yol

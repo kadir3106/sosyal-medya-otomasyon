@@ -410,7 +410,59 @@ git gc --prune=now --aggressive
 | Sır tarayıcısı **geçmişi** tarıyor (`--history`) | ✅ madde 26 |
 | Yol tabanlı dedektörler (tarayıcı profili, `.env`, arşiv) | ✅ madde 26 + 29.7 |
 | Commit edilmiş **arşivler açılıp** taranıyor | ✅ madde 29.7 |
+| **İç içe arşivler** de açılıyor (`MAX_ARCHIVE_DEPTH=3`) | ✅ madde 31 |
+| Derinlik sınırına takılan arşiv **bulgu** olarak raporlanıyor | ✅ madde 31 |
+| Arşiv **içindeki** `Cookies`/`Login Data` yolu da yakalanıyor | ✅ madde 31 |
+| JSON alan sırları (`"encryptionKey":"..."`) yakalanıyor | ✅ madde 31 |
+| Disk üzerindeki yedek kopyaları ölçülüyor (`.gitignore` dışı) | ✅ madde 31 |
 | CI'da `history-scan` işi (`fetch-depth: 0`) | ✅ |
 | Baseline: yeni sızıntıyı yakalar, bilineni susturur | ✅ |
 
-**Kalan risk:** tarayıcı arşivleri açıyor ama **özyinelemeli değil** — bir `.tar.gz` içindeki başka bir arşivi açmıyor. Bu yedekte iç arşiv `n8n-data.tar` idi ve yalnızca elle açıldı, yani `database.sqlite` + `encryptionKey` otomatik taranmadı. Yeni bir kör nokta sınıfı olarak kayıtlı; gerekirse `read_archive_texts`'e derinlik sınırlı özyineleme eklenmeli.
+### 5.1 Kapatılan kör nokta: özyinelemesiz arşiv taraması
+
+Ölçüm (2026-11-02) — bu artık **kapalı**:
+
+| Katman | Önce | Sonra |
+| --- | --- | --- |
+| `backups/*.tar.gz` → `n8n-data.tar` | iç arşiv **hiç açılmıyordu** | açılıyor (2 katman) |
+| `./config` (56 B, `encryptionKey`) | **0 bulgu** üretiyordu | `json_secret_field` yakalıyor |
+| Arşiv içindeki `Cookies`/`Login Data` | görünmüyordu | `browser_cookies` bulgusu |
+| Derinlik sınırı aşımı | sessizce atlanıyordu | `nested_archive_unopened` bulgusu |
+
+**Neden `json_secret_field` gerekti:** mevcut `assigned_secret` deseni Python
+atamasına (`KEY = "..."`) bakıyor ve JSON biçimini kaçırıyordu. Gerçek dosya
+56 bayttı; n8n'in tüm credential deposunu çözen anahtar buydu.
+
+**Yanlış alarm kontrolü:** yeni desen iki test dosyasını kırmızıya döndürdü.
+İkisi de gerçek sır değil, testin "sızmamalı" demek için kullandığı yer tutucu
+(`SHOULD_NOT_APPEAR_IN_SCHEMA`, `should-not-be-written`). Bunları baseline'a
+yazmak yanlış olurdu — baseline *gerçek* bulgu demek. Bu yüzden dar bir
+`SENTINEL_SUBSTRINGS` listesi eklendi (desen zayıflatılmadı).
+
+### 5.2 `.gitignore` dışındaki kopyalar — tarayıcı göremez
+
+`*.tar.gz` ve `*.bundle` `.gitignore`'da. Bu doğru (yoksa 130 MB'lık bundle ve
+5.7 MB'lık n8n veritabanı commit'lenebilirdi), ama **bu dosyalardaki sır ne
+`--history` ne HEAD taraması tarafından görülür**. Bu yüzden ayrı bir ölçüm var:
+
+```powershell
+python scripts/verify_leak_rotation.py     # "Disk üzerindeki yedek kopyaları" bölümü
+```
+
+Diskteki bundle içinde ölçülen (2026-11-02):
+
+| Nesne | Ölçüm |
+| --- | --- |
+| `video-output/tiktok_session/` | **941 nesne** (tüm Chromium profili) |
+| `Network/Cookies` | `sessionid`, `sessionid_ss`, `sid_tt`, `uid_tt` |
+| Çerez son kullanma | **2027-03-16** — yani hâlâ geçerli |
+
+Silme **bilinçli olarak otomatikleştirilmedi**: bundle, geçmişi geri almanın
+tek yolu (`git clone` ile dönüş). Yanlış anda çalışan bir betik geri
+getirilemez veri kaybı demek. Karar operatörün; betik yalnızca varlığını ölçer
+ve `CAPABILITIES` tablosunda bunu gerekçesiyle listeler.
+
+**Kalan risk:** arşiv taraması artık özyinelemeli, ama derinlik 3 ile sınırlı.
+Daha derin bir yedek `nested_archive_unopened` bulgusu üretir — yani sessiz
+kalmaz, ama **elle açılması** gerekir.
+

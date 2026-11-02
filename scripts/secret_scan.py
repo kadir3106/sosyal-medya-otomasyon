@@ -35,12 +35,39 @@ PATTERNS: list[tuple[str, re.Pattern[str]]] = [
             r"""["']([A-Za-z0-9_\-]{24,})["']"""
         ),
     ),
+    # JSON alan adıyla gelen sır: `{"encryptionKey":"<32 karakter>"}`.
+    # Neden ayrı desen: `assigned_secret` Python atamasına (`KEY = "..."`) bakıyor
+    # ve JSON'u kaçırıyor. Ölçüm (2026-11-02): n8n yedeğindeki `./config`
+    # dosyası 56 bayttı, credential deposunu çözen `encryptionKey` içeriyordu
+    # ve MEVCUT desenlerle 0 bulgu üretiyordu. Alan adı listesi bilinçli dar:
+    # genel bir "herhangi anahtar" deseni depoyu yanlış alarmla doldurur.
+    (
+        "json_secret_field",
+        re.compile(
+            r'(?i)"?(?:encryptionKey|encryption_key|apiKey|api_key|secretKey|'
+            r'secret_key|accessToken|access_token|refreshToken|refresh_token|'
+            r'clientSecret|client_secret|privateKey|private_key)"?\s*[:=]\s*"'
+            r'([A-Za-z0-9+/=_\-]{16,})"'
+        ),
+    ),
 ]
 
 # Bu değerler gerçek sır değil; desen eşleşse de yok sayılır.
 ALLOWLIST_SUBSTRINGS = (
     "example", "placeholder", "your_", "xxx", "dummy", "fake", "test",
     "changeme", "redacted", "[", "]", "<", ">", "${",
+)
+
+# "Bu değer yazılmamalı" diyen NİYET işaretleri. Ölçüm (2026-11-02): `json_secret_field`
+# deseni eklendikten sonra iki test dosyası kırmızıya döndü — ikisi de gerçek sır
+# değil, testin "sızmamalı" demek için kullandığı yer tutucuydu:
+#   test_documentary_v2_stage_a.py  → "SHOULD_NOT_APPEAR_IN_SCHEMA"
+#   test_publish_status.py          → "should-not-be-written"
+# Bu ikisini baseline'a yazmak yanlış olurdu: baseline "geçmişte kabul edilmiş
+# gerçek bulgu" demek. Kural dar tutuldu; gerçek bir anahtar bu adlarla gelmez.
+SENTINEL_SUBSTRINGS = (
+    "should_not", "should-not", "shouldnot", "must_not", "must-not",
+    "do_not", "do-not", "not_be_written", "not-be-written", "redacted",
 )
 
 # Üretilmiş/ikili içerik ve test fixture'ları taranmaz.
@@ -67,6 +94,10 @@ ARCHIVE_SUFFIXES = (
 # Zip bomb'a karşı: üye sayısı ve toplam açılmış boyut sınırlı.
 MAX_ARCHIVE_MEMBERS = 200
 MAX_ARCHIVE_BYTES = 20_000_000
+# İç içe arşiv derinliği. Neden 3: ölçülen gerçek durum tar.gz → tar → dosya,
+# yani 2 katman; bir katman pay bırakıldı. Sınırsız bırakmak zip bomb'a açık
+# kapı olurdu (her katman 200 üye açabildiği için üstel büyür).
+MAX_ARCHIVE_DEPTH = 3
 
 # ---------------------------------------------------------------------------
 # YOL TABANLI DEDEKTÖRLER
@@ -199,15 +230,12 @@ def iter_history_texts(
     return texts
 
 
-def read_archive_texts(path: str, data: bytes) -> list[tuple[str, str]]:
-    """Arşiv blob'unu açıp metin üyelerini döndürür: (üye yolu, metin).
+def _archive_members(path: str, data: bytes) -> list[tuple[str, bytes]]:
+    """Arşivi açıp (üye yolu, ham baytlar) çiftlerini döndürür.
 
-    Yalnızca metin gibi görünen üyeler taranır; ikili üyeler (video, sqlite)
-    atlanır — onların tehlikesi içeriklerinde değil, varlıklarında. Bu yüzden
-    çağıran taraf arşivin kendisini de yol deseniyle ayrıca raporlar.
-
-    Bozuk/açılamayan arşiv **sessizce geçilmez**: boş liste döner ama `path_is_archive`
-    sayesinde yol deseni yine bulgu üretir. Böylece "açamadım" asla "temiz" olmaz.
+    `(path, data)` döndürmek önemli: iç içe arşivlerde yalnızca üye adı
+    bilinseydi çağıran taraf "bu bir arşiv mi" sorusunu cevaplayamazdı.
+    Bozuk/açılamayan arşivde boş liste — istisna fırlatmaz.
     """
     import io
     import tarfile
@@ -236,17 +264,71 @@ def read_archive_texts(path: str, data: bytes) -> list[tuple[str, str]]:
 
             raw = gzip.decompress(data)[:MAX_ARCHIVE_BYTES]
             members.append((path, raw))
-        else:
-            return []
-    except (OSError, ValueError, zipfile.BadZipFile, tarfile.TarError):
+    except (OSError, ValueError, zipfile.BadZipFile, tarfile.TarError, EOFError):
         return []
+    return members
 
-    out: list[tuple[str, str]] = []
-    for name, raw in members:
+
+def read_archive_texts(path: str, data: bytes) -> list[tuple[str, str]]:
+    """Arşiv blob'unu açıp metin üyelerini döndürür: (üye yolu, metin).
+
+    Yalnızca metin gibi görünen üyeler taranır; ikili üyeler (video, sqlite)
+    atlanır — onların tehlikesi içeriklerinde değil, varlıklarında. Bu yüzden
+    çağıran taraf arşivin kendisini de yol deseniyle ayrıca raporlar.
+
+    ÖNEMLİ — iç içe arşivler açılır (`MAX_ARCHIVE_DEPTH`). Ölçüm (2026-11-02):
+    `backups/otomasyon-yedek-2026-09-05.tar.gz` içinde `n8n-data.tar` vardı ve
+    bu fonksiyon onu ikili diye atlıyordu. Sonuç: içerideki `./config` —
+    56 bayt, n8n credential deposunu çözen `encryptionKey` — hiç okunmadı ve
+    tarayıcı "temiz" dedi. İkili olması "temiz" değil, "okunmadı" demek.
+
+    Derinlik sınırı yüzünden açılamayan iç arşivler burada dönmez; onlar
+    `unopened_archives()` ile ayrıca alınır ve bulgu sayılır. Böylece
+    "derine inmedim" asla "temiz" olmaz.
+
+    Bozuk/açılamayan arşiv **sessizce geçilmez**: boş liste döner ama `path_is_archive`
+    sayesinde yol deseni yine bulgu üretir. Böylece "açamadım" asla "temiz" olmaz.
+    """
+    return _walk_archive(path, data, depth=1)
+
+
+# Derinlik sınırı yüzünden AÇILAMAYAN iç arşivler: (üye yolu, katman).
+# Neden modül düzeyi: `read_archive_texts` imzası testlerde ve CI'da kullanılıyor;
+# ikinci bir dönüş değeri eklemek çağıranları kırardı. Tarama başında
+# `reset_unopened_archives()` çağrılır, yoksa önceki taramanın kalıntısı raporlanır.
+_unopened_archives: list[tuple[str, int]] = []
+
+
+def unopened_archives() -> list[tuple[str, int]]:
+    """Son taramada açılamayan iç arşivler — her biri bir bulgudur."""
+    return list(_unopened_archives)
+
+
+def reset_unopened_archives() -> None:
+    _unopened_archives.clear()
+
+
+def _walk_archive(path: str, data: bytes, *, depth: int, base: str = "") -> list[tuple[str, str]]:
+    """Özyinelemeli arşiv yürüyüşü: metin üyeleri döner.
+
+    Derinlik sınırına takılan iç arşivler `_unopened_archives`'e yazılır.
+    """
+    texts: list[tuple[str, str]] = []
+    for name, raw in _archive_members(path, data):
+        member_path = f"{base}!{name}" if base else f"{path}!{name}"
+        if path_is_archive(name):
+            if depth >= MAX_ARCHIVE_DEPTH:
+                # Sınıra geldik: sessizce atlamak yerine işaretle.
+                _unopened_archives.append((member_path, depth))
+                continue
+            texts.extend(_walk_archive(path, raw, depth=depth + 1, base=member_path))
+            continue
         if b"\x00" in raw[:8000]:
             continue
-        out.append((f"{path}!{name}", raw.decode("utf-8", "replace")))
-    return out
+        texts.append((member_path, raw.decode("utf-8", "replace")))
+    return texts
+
+
 
 
 def _sequential_run(value: str, run: int = 10) -> bool:
@@ -351,9 +433,42 @@ def scan_history_struct() -> tuple[list[dict], dict[str, int]]:
     # `include_archives=True`: commit edilmiş yedek/zip içeriği de taranır.
     # Varsayılan `False` olsaydı `backups/*.tar.gz` sınıfı yine görünmezdi.
     content_hits: list[tuple[str, int, str, str, str]] = []
+    reset_unopened_archives()
+    # Arşiv üyelerinin yolu `dis.tar!ic/dosya` biçiminde gelir. Yol desenleri
+    # bunlara da uygulanır: bir `Cookies`/`Login Data` dosyası zip İÇİNDE olsa
+    # da tehlikelidir ve içeriği ikili olduğu için metin taraması göremez.
+    inner_path_hits: dict[str, str] = {}
     for path, text in iter_history_texts(pairs, include_archives=True):
+        if "!" in path:
+            for detector, _matched in scan_path(path.split("!", 1)[1]):
+                if detector != "archive_file":
+                    inner_path_hits.setdefault(path, detector)
         for name, lineno, value, snippet in scan_text_values(text):
             content_hits.append((path, lineno, name, value, snippet))
+
+    for path, detector in sorted(inner_path_hits.items()):
+        findings.append({
+            "kind": "path",
+            "detector": detector,
+            "path": path,
+            "detail": f"{path} (arşiv içinde)",
+        })
+        counts["path_hits"] += 1
+
+    # Derinlik sınırı yüzünden açılamayan iç arşivler: her biri bulgu.
+    # Neden bulgu: "derine inmedim" bilgisi operatöre ulaşmazsa tarayıcı
+    # sessizce kör kalır — düzeltmeye çalıştığımız hatanın aynısı.
+    for archive_path, depth in sorted(set(unopened_archives())):
+        findings.append({
+            "kind": "path",
+            "detector": "nested_archive_unopened",
+            "path": archive_path,
+            "detail": (
+                f"{archive_path} (iç içe arşiv, katman {depth} — "
+                f"MAX_ARCHIVE_DEPTH={MAX_ARCHIVE_DEPTH} sınırı; elle açın)"
+            ),
+        })
+        counts["path_hits"] += 1
 
     current = _head_texts({p for p, _, _, _, _ in content_hits})
     for path, lineno, name, value, snippet in sorted(set(content_hits)):
@@ -428,6 +543,8 @@ def scan_text_values(text: str) -> list[tuple[str, int, str, str]]:
             value = m.group(0)
             lowered = value.lower()
             if any(tok in lowered for tok in ALLOWLIST_SUBSTRINGS):
+                continue
+            if any(tok in lowered for tok in SENTINEL_SUBSTRINGS):
                 continue
             # Satır başına tek bulgu: desenler en özelden en gene sıralı, yani
             # `sk-...` hem `openai_key` hem `assigned_secret` ile eşleşse de

@@ -215,6 +215,41 @@ def check_tiktok() -> list[str]:
     return lines
 
 
+#: Sızıntılı nesneleri taşıyan dosya kopyaları — repo DIŞINDA olsalar bile.
+#: Neden ayrı kontrol: `.gitignore` bu ikisini de yok sayıyor (`*.tar.gz`,
+#: `*.bundle`), yani `secret_scan --history` de HEAD taraması da onları hiç
+#: görmez. Ölçüm (2026-11-02): diskteki 130.7 MB'lık bundle'da
+#: `video-output/tiktok_session/` altında **941 nesne** duruyor ve içindeki
+#: `sessionid` çerezi 2027-03-16'ya kadar geçerli. Bu yüzden döndürme
+#: doğrulaması "repo temiz mi" değil, "sır hâlâ okunabilir bir kopyada mı"
+#: sorusunu sormalı.
+LEAK_COPIES: list[tuple[Path, str]] = [
+    (ROOT.parent / "sosyal-medya-otomasyon-YEDEK.bundle",
+     "git bundle — tüm geçmiş (tiktok_session profili + n8n encryptionKey)"),
+    (TARBALL, "n8n yedeği — database.sqlite + encryptionKey"),
+]
+
+
+def check_stray_copies() -> list[str]:
+    """Repoda/dışında duran yedek kopyaları ölçer — sır değerini yazdırmadan."""
+    lines: list[str] = []
+    found = False
+    for path, what in LEAK_COPIES:
+        if not path.exists():
+            lines.append("%-14s yok — ✅" % path.name)
+            continue
+        found = True
+        size_mb = path.stat().st_size / 1e6
+        lines.append("HALA DISKTE   : %s (%.1f MB)" % (path, size_mb))
+        lines.append("                %s" % what)
+    if found:
+        lines.append("SONUC         : bu kopyalar döndürme tamamlanana kadar sırrı "
+                     "okunabilir tutar")
+        lines.append("                Şifreli arşive taşıyın veya silin "
+                     "(docs/SIZINTI_TEMIZLIGI.md §5)")
+    return lines
+
+
 #: Hangi adımın otomatikleştirilebildiği — tahmin değil, denendi ve ölçüldü
 #: (2026-11-02). `verify_leak_rotation.py` bunu her çalıştırmada hatırlatır ki
 #: bir sonraki turda "betikle yapılır mı" sorusu yeniden sorulmasın.
@@ -229,6 +264,13 @@ CAPABILITIES: list[tuple[str, str, str, str]] = [
      "Oturum bu makinede GEÇERLİ (ölçüldü: giriş duvarı yok, sessionid "
      "2027-03-16) ama web /setting sayfasında log out/device/password/"
      "security bölümü hiç yok — panel mobil uygulamada"),
+    # Silme bilinçli olarak betikleştirilmedi: bu dosyalar geçmişi geri alma
+    # yolunun TEK kopyası (`bundle` ile `git clone` geri dönüşü). Otomatik
+    # silmek, yanlış anda çalıştığında geri dönüşü olmayan veri kaybı demek.
+    # Kararı operatör verir; betik yalnız varlığını ölçer.
+    ("yedek-kopya", "Elle sil veya şifreli arşive taşı (§5)", "HAYIR",
+     "bundle tek geri dönüş yolu olduğu için silme otomatikleştirilmedi — "
+     "yanlış anda çalışan bir betik geçmişi geri getirilemez biçimde yok eder"),
 ]
 
 
@@ -282,6 +324,12 @@ def main(argv: list[str] | None = None) -> int:
         print("\n".join(lines))
         if any("HALA DISKTE" in line for line in lines):
             failures.append("tiktok-profil")
+
+    print("\n--- Disk üzerindeki yedek kopyaları ---")
+    stray = check_stray_copies()
+    print("\n".join(stray))
+    if any("HALA DISKTE" in line for line in stray):
+        failures.append("yedek-kopya")
 
     print("\n" + "=" * 66)
     if failures:

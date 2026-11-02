@@ -205,6 +205,9 @@ def test_main_exit_codes(monkeypatch):
     monkeypatch.setattr(mod, "check_telegram", lambda *a: ["SIZAN : HTTP 401 iptal"])
     monkeypatch.setattr(mod, "check_n8n_password", lambda *a: ["SONUC : değişmiş"])
     monkeypatch.setattr(mod, "check_tiktok", lambda: ["profil silinmiş"])
+    # Disk gerçekten okunursa test bu makinenin yedeklerine bağlı kalır ve
+    # yedek silindiği gün yeşilden kırmızıya döner — ölçüm değil, ortam bağımlılığı.
+    monkeypatch.setattr(mod, "check_stray_copies", lambda: ["yedek.bundle yok — ✅"])
     assert mod.main([]) == 0
 
     monkeypatch.setattr(mod, "check_telegram", lambda *a: ["SIZAN : HTTP 200  >>> HALA GECERLI <<<"])
@@ -236,13 +239,51 @@ def test_failure_output_names_panel_and_says_not_automatable(monkeypatch, capsys
                         lambda *a: ["SIZAN : HTTP 200  >>> HALA GECERLI <<<"])
     monkeypatch.setattr(mod, "check_n8n_password", lambda *a: ["SONUC : HALA AYNI"])
     monkeypatch.setattr(mod, "check_tiktok", lambda: ["profil : HALA DISKTE"])
+    monkeypatch.setattr(mod, "check_stray_copies", lambda: ["HALA DISKTE   : yedek.bundle"])
 
     assert mod.main([]) == 1
     out = capsys.readouterr().out
     assert "BETİKLE YAPILAMAZ" in out
     for panel in ("BotFather", "n8n UI", "Mobil uygulama"):
         assert panel in out
-    assert out.count("otomatik: HAYIR") == 3
+    assert out.count("otomatik: HAYIR") == 4
+
+
+def test_stray_copy_detected_even_outside_repo(tmp_path, monkeypatch):
+    """Repo dışındaki yedek kopya da "açık kalem" sayılmalı.
+
+    Neden: `.gitignore` `*.tar.gz` ve `*.bundle` desenlerini yok sayıyor, yani
+    `secret_scan --history` de HEAD taraması da onları hiç görmüyor. Ölçüm
+    (2026-11-02): diskteki 130 MB'lık bundle'da tiktok_session profili (941
+    nesne) ve süresi 2027-03-16'ya kadar geçerli `sessionid` çerezi duruyor.
+    Tarayıcı "temiz" derken sır okunabilir bir kopyada yaşıyordu.
+    """
+    import verify_leak_rotation as mod
+
+    inside = tmp_path / "backups" / "yedek.tar.gz"
+    inside.parent.mkdir(parents=True)
+    inside.write_bytes(b"x")
+    outside = tmp_path.parent / "repo-YEDEK.bundle"
+    outside.write_bytes(b"x")
+    monkeypatch.setattr(mod, "LEAK_COPIES", [
+        (outside, "git bundle"),
+        (inside, "n8n yedegi"),
+    ])
+
+    lines = mod.check_stray_copies()
+    text = "\n".join(lines)
+    assert len([ln for ln in lines if ln.startswith("HALA DISKTE")]) == 2
+    assert "repo-YEDEK.bundle" in text
+
+
+def test_stray_copy_absent_is_not_a_failure(tmp_path, monkeypatch):
+    """Silinmiş kopya açık kalem değil — ✅ ile raporlanmalı."""
+    import verify_leak_rotation as mod
+
+    monkeypatch.setattr(mod, "LEAK_COPIES", [(tmp_path / "yok.bundle", "git bundle")])
+    lines = mod.check_stray_copies()
+    assert not any("HALA DISKTE" in line for line in lines)
+    assert any("yok" in line for line in lines)
 
 
 def test_capabilities_cover_every_failure_key():
@@ -250,7 +291,7 @@ def test_capabilities_cover_every_failure_key():
     import verify_leak_rotation as mod
 
     names = {row[0] for row in mod.CAPABILITIES}
-    assert names == {"telegram", "n8n-parola", "tiktok"}
+    assert names == {"telegram", "n8n-parola", "tiktok", "yedek-kopya"}
     for name, panel, auto, why in mod.CAPABILITIES:
         assert panel and auto == "HAYIR" and len(why) > 20
 
