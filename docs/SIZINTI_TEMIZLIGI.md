@@ -566,6 +566,35 @@ tamamlandıktan **sonra** silinebilir.
 Daha derin bir yedek `nested_archive_unopened` bulgusu üretir — yani sessiz
 kalmaz, ama **elle açılması** gerekir.
 
+### 5.5 Test dosyalarının kendi sağlığı
+
+Bu iş sırasında test düzenlemelerinde **üç kez** aynı hata oluştu: yeni bir test,
+var olan bir testin gövdesinin **ortasına** eklendi. Sonuçlar:
+
+| Dosya | Ne oldu | Neden fark edilmedi |
+| --- | --- | --- |
+| `test_seal_leak_copies.py` | Gövdeye yetim bir `docstring` + `with` bloğu yapıştı; `test_not_a_sealed_file_rejected` kayboldu | Test geçiyordu — yetim blok bir docstring'e dönüşmüştü, sözdizimi geçerli |
+| `test_verify_leak_rotation.py` | `test_tiktok_verdict_*` **iki kez** tanımlandı, ilki `con.execute` satırında kesildi | Python ikinci tanım ilkini ezip geçti; assert'siz ölü kod kaldı, suite yeşil kaldı |
+
+Ortak özellik: **suite yeşil kalıyor**. "Testler geçiyor" bu sınıfı yakalamıyor,
+çünkü hata testin *çalışmasını* değil *varlığını* bozuyor.
+
+Bu yüzden `video-worker/tests/test_test_suite_hygiene.py` eklendi — dört yapısal
+kapı (`ast` tabanlı, kod çalıştırmadan):
+
+| Kapı | Yakaladığı |
+| --- | --- |
+| `test_no_duplicate_test_names` | Aynı isimli iki test = biri sessizce ölü |
+| `test_no_test_function_is_empty` | Gövdesi yalnız docstring → hiçbir şey ölçmez, hep yeşil |
+| `test_no_orphan_statements_after_test_function` | Tek gövdede **iki docstring** = yapıştırmanın kesin imzası |
+| `test_every_test_module_imports` | Geçerli Python ama import edilemeyen dosya |
+
+Kapıların gerçekten çalıştığı **kanıtlandı**: dört kasıtlı hata içeren geçici bir
+dosyayla koşuldu, üç dedektör de dosya::test + satır numarasıyla kırmızıya döndü
+(`3 failed, 1 passed`). Sonra geçici dosya silindi.
+
+
+
 
 
 

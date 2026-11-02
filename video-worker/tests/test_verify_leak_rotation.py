@@ -354,19 +354,6 @@ def test_capabilities_cover_every_failure_key():
         assert panel and auto == "HAYIR" and len(why) > 20
 
 
-def test_tiktok_verdict_says_web_cannot_revoke(tmp_path, monkeypatch):
-    """TikTok hükmü, iptalin web'de olmadığını yazmalı — yanlış yönlendirme olmasın."""
-    import sqlite3
-
-    import verify_leak_rotation as mod
-
-    profile = tmp_path / "tiktok_session"
-    net = profile / "Default" / "Network"
-    net.mkdir(parents=True)
-    con = sqlite3.connect(str(net / "Cookies"))
-    con.execute(
-        "CREATE TABLE cookies (host_key TEXT, name TEXT, expires_utc INTEGER)")
-    con.execute("INSERT INTO cookies VALUES ('.tiktok.com','sessionid',13350000000000000)")
 def test_discover_finds_archive_under_any_name(tmp_path, monkeypatch):
     """Sabit liste yetmez: kullanıcı yedeği başka adla kopyalamış olabilir.
 

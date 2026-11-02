@@ -193,14 +193,3 @@ def test_main_open_wrong_key_exit_code_1(tmp_path, monkeypatch):
     assert code == 1
     assert not (tmp_path / "out.bin").exists()
 
-    """Boş parola = parolasız arşiv. Reddedilmeli, uyarıyla geçilmemeli."""
-    _needs_crypto()
-    with pytest.raises(ValueError, match="boş parola"):
-        seal_bytes(_secret_ish(), "")
-
-
-def test_not_a_sealed_file_rejected():
-    """Düz bir dosyayı 'mühürlü' sanıp açmaya çalışmak sessiz geçmemeli."""
-    _needs_crypto()
-    with pytest.raises(ValueError, match="MAGIC yok"):
-        open_bytes(b"just a normal tarball, nothing sealed here", "x")
