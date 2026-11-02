@@ -1618,6 +1618,8 @@ Zip bomb'a karşı sınırlar: üye başına 20 MB, en çok 200 üye. Bozuk arş
 > | `.env` | **9 dolu anahtar** | **hayır** — `.gitignore:2` kapsamında, hiç commit edilmemiş |
 >
 > Temizlik üç adım: (1) TikTok oturumunu **iptal etmek** (tüm cihazlardan çıkış), (2) yedek tarball'ın içindeki her sırrı **döndürmek**, (3) `git filter-repo` ile her iki yolu geçmişten silmek. Hepsi yıkıcı/geri alınamaz olduğu için **onay bekliyor**; bu yüzden baseline bilinçli olarak boş değil.
+>
+> **Adım adım rehber hazır: [`docs/SIZINTI_TEMIZLIGI.md`](SIZINTI_TEMIZLIGI.md).** Yedek tarball'ın içi açıldı ve beklencenden ağır çıktı: içinde `n8n-data.tar` → `database.sqlite` (n8n credential deposu) + `config` → **`encryptionKey` (32 karakter)** var. Yani n8n üzerinden yönetilen her kimlik bilgisi açık kabul edilmeli.
 
 
 | Commit | İçerik |

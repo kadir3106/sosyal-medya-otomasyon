@@ -43,6 +43,10 @@ n8n arayüzü: http://localhost:5678
 
 > ⚠️ Bu bayrak daha önce yalnızca kodda vardı; `.env.example`'da tanımlı olmadığı için pratikte hiçbir kurulum onu açamıyordu ve `run_daily.bat` onay adımını atlayarak (`--now`) çalıştığı için günlük tur video üretip sessizce yayınlamadan bitiyordu.
 
+## Sızıntı temizliği
+
+Geçmişte commit edilmiş bir TikTok tarayıcı oturumu ve bir n8n yedek arşivi var. **Döndürme (rotation) adımları ve `git filter-repo` komutları:** [`docs/SIZINTI_TEMIZLIGI.md`](docs/SIZINTI_TEMIZLIGI.md). Bu işlemler yıkıcıdır, sırayla ve elle koşulmalıdır.
+
 ## Security note (credential rotation)
 
 `main` previously tracked a Playwright TikTok browser profile under `video-output/tiktok_session/` (1015 files across 2 commits). Those paths are now gitignored and untracked on this branch, but **the TikTok session/cookies that lived there are still valid credentials** — revoke them from TikTok (log out all sessions) and re-run `scripts/refresh_tiktok_session.py`.
