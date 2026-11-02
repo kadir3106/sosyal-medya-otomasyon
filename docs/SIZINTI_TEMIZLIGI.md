@@ -24,23 +24,43 @@
 
 Her satır: ne yapılacak → nereden → doğrulama. Değerleri bu dosyaya **yazmayın**.
 
-### 2.1 Önce n8n anahtarı (en kritik)
+### 2.1 Önce n8n anahtarı (ölçülmüş: 1 credential)
 
-`encryptionKey` + `database.sqlite` birlikte sızdığı için, n8n'de duran bütün credential'lar açık kabul edilir.
+`encryptionKey` + `database.sqlite` birlikte sızdı, yani o tek credential **çözülebilir** durumda.
+
+**Ölçüm (2026-11-02):** arşiv açıldı, `database.sqlite` + `database.sqlite-wal` + `config` **birlikte** okundu.
+
+| Kalem | Değer |
+| --- | --- |
+| `credentials_entity` (yalnızca .sqlite) | **0** — yanıltıcı |
+| `credentials_entity` (WAL dahil) | **1** |
+| Credential | `Telegram - Otomasyon Bot`, tip `telegramApi` |
+| `workflow_entity` | 0 (workflow yok) |
+| `variables` | 0 |
+| `user` | 1 (sahip hesabı) |
+| `settings` | 4-5 (sadece chat/ldap/banner bayrakları) |
+| `oauth_*`, `user_api_keys`, `secrets_provider_*` | hepsi 0 |
+
+> ⚠️ `database.sqlite` tek başına açılırsa **0** credential görünür — n8n `journal_mode=wal` ile çalışıyor ve asıl veri `database.sqlite-wal` içinde. Yanlış dosyayı okumak "sızıntı yok" gibi görünür.
+
+**Şifreleme gerçekten çözüldü (iddia değil, test):** `data` alanı base64 → `Salted__` (OpenSSL başlığı) + salt + AES-256-CBC gövdesi. `encryptionKey` doğrudan parola olarak `EVP_BytesToKey`'e verildiğinde `{"accessToken": ...}` JSON'u çıktı. Yani anahtar + veritabanı = **düz metin**.
 
 1. n8n'i durdurun: `docker compose stop n8n`
-2. n8n arayüzünde tüm credential'ları tek tek **silin ve yeniden girin** (yeni API anahtarlarıyla)
-3. n8n'i **temiz bir volume** ile yeniden kurun: `docker compose down -v n8n` (⚠️ volume silinir)
-4. n8n'i açıp yeniden kurun, workflow'ları içe aktarın
+2. BotFather → botunuz → **API Token → Revoke current token** → yeni token
+3. Yeni token'ı `.env`'e yazın
+4. n8n'i **temiz bir volume** ile yeniden kurun: `docker compose down -v n8n` (⚠️ volume silinir)
 
-> Anahtarı değiştirip veritabanını korumak çalışmaz: n8n eski anahtarla şifrelenmiş credential'ları okuyamaz. Doğru sıra "credential'ları yenile → volume'u sıfırla".
+> n8n'de yeniden girilecek **başka credential yok** (tablo 0). Ama eski `encryptionKey` + veritabanı `backups/` klasöründe **hâlâ diskte** — bunları da silin, yoksa aynı sır okunabilir kalır.
 
-### 2.2 TikTok
+### 2.1b TikTok tarayıcı oturumu (ölçülmüş: 1096 dosya)
+
+`video-output/tiktok_session/` **git'ten çıktı ama diskte duruyor** (`1096` dosya). İçinde `Default/Network/Cookies` ve `Default/Login Data` var.
 
 1. TikTok → Settings → Security → **Log out of all devices**
-2. Aynı hesapta şifreyi de değiştirin (oturum çerezi tek başına yeterliydi, ama savunma derinliği).
-3. Tarayıcı oturumu gerekiyorsa yeniden üretin: `python scripts/refresh_tiktok_session.py`
-4. TikTok Developer panelinden **PKCE/OAuth token'larını** iptal edin (`TIKTOK_CLIENT_KEY`/`SECRET` uygulaması).
+2. Şifreyi de değiştirin
+3. Yerel profili silin: `Remove-Item video-output/tiktok_session -Recurse -Force`
+4. Gerekiyorsa yeniden üretin: `python scripts/refresh_tiktok_session.py`
+
 
 ### 2.3 Google / YouTube
 
