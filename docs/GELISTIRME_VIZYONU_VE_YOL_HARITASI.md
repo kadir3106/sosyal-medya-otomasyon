@@ -1508,7 +1508,7 @@ if not (approved or autonomous_publish):
 
 `approved`'ı `if director_mode` bloğunun içinden dışarı taşıdım (blok çalışmazsa `NameError` olurdu). İptal dalı kapıdan önce `return None` ettiği için **açık bir "İptal" açık bayrağı da ezer** — bu korunuyor.
 
-#### 29.4 Beş yeni test (23 → 28)
+#### 29.4 Yedi yeni test (28 → 30), iki mutasyon kanıtı
 
 | Test | Neyi kilitliyor |
 | --- | --- |
@@ -1517,12 +1517,25 @@ if not (approved or autonomous_publish):
 | `test_director_timeout_publishes_when_autonomous_flag_set` | Bayrak açıksa "yanıt gelmezse yayınla" sözü tutulur |
 | `test_director_approval_publishes` | Onay + bayrak yok → yayınlanır (güncellendi) |
 | `test_director_cancel_beats_autonomous_flag` | İptal, açık bayrağı ezer |
+| `test_director_timeout_notice_matches_actual_behaviour` | Bayrak kapalıyken mesaj "taslak kalır" der ve öyle olur |
+| `test_director_timeout_notice_promises_publish_when_flag_set` | Bayrak açıkken mesaj "otomatik yayınlanır" der ve öyle olur |
 
 `_director_setup` artık `autonomous=False` varsayılanıyla geliyor; böylece testler *yalnızca* insan onayını ölçüyor, env bayrağı arka planda gizlice açık kalmıyor. Bu önemliydi: eski hâlde `monkeypatch.setenv(..., "true")` ile her yönetmen testi bayrağı açıyordu, yani `approved`'ın gerçekten gerekli olup olmadığı **hiç sınanmamıştı**.
 
-**Mutasyon kanıtı.** `if not (approved or autonomous_publish)` → `if not autonomous_publish` yapıldığında **2 test düştü** (`test_operator_approval_authorises_publish_without_env_flag`, `test_director_approval_publishes`). Yani testler gerçekten düzeltmeyi koruyor.
+**Mutasyon kanıtı (üç ayrı mutasyon).**
+
+| Mutasyon | Sonuç |
+| --- | --- |
+| `if not (approved or autonomous_publish)` → `if not autonomous_publish` | **2 test düştü** (`test_operator_approval_authorises_publish_without_env_flag`, `test_director_approval_publishes`) |
+| Onay bekleme mesajındaki `if autonomous_publish` → `if True` | **1 test düştü** (`test_director_timeout_notice_matches_actual_behaviour`) |
+
+Yani testler hem *yetki* mantığını hem de *operatöre verilen sözü* koruyor.
 
 #### 29.5 Belgeleme ve yapılandırma
+
+Bir dördüncü sessiz yalan daha vardı: operatöre gösterilen onay mesajı. `"yanıt gelmezse otomatik yayınlanır"` metni bayrak durumundan bağımsız yazılmıştı; bayrak kapalıyken bu söz tutulmuyordu. `autonomous_publish` artık fonksiyon başında bir kez okunup hem mesajda hem kapıda kullanılıyor.
+
+Diğer değişiklikler:
 
 - **`.env.example`** — bayrak, yorumlarıyla birlikte (varsayılan kapalı, yalnızca tam `true` sayılır, `1`/`yes`/`TRUE ` kapalı sayılır, açılınca YouTube'a `public` gider).
 - **`README.md`** — yeni "Otonom yayın: iki yetki, ikisi de bilinçli" bölümü: yetki tablosu, lookalike değer uyarısı, `--director` akışının adım adım davranışı.
@@ -1533,8 +1546,9 @@ if not (approved or autonomous_publish):
 #### 29.6 Doğrulama
 
 ```
-pytest -q                      → 788 passed, 3 skipped   (750 → 788, +38)
+pytest -q                      → 790 passed, 3 skipped   (750 → 790, +40)
 ruff E9,F63,F7,F82             → All checks passed!
+secret_scan.py                 → 768 dosyada temiz
 ```
 
 **Sınır (dürüst):** `scripts/` altındaki `daily_autonomous_agent.py` hâlâ tam kapsanmıyor. Gerçek birim testi `execute_daily_run`'ın yan etkilerini (render, yayın, Telegram) teker teker sarmalamayı gerektirir; bugün yalnızca imza/çağrı tutarlılığı, CLI argüman ayrıştırması ve yayın kapısı kilitli. Ajanın iç mantığı hâlâ test edilmiyor.

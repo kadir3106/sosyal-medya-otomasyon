@@ -311,6 +311,42 @@ def _director_setup(monkeypatch, *, autonomous: bool = False):
     monkeypatch.setattr(agent.asyncio, "sleep", _FakeAsyncio().sleep)
 
 
+def test_director_timeout_notice_matches_actual_behaviour(isolated, monkeypatch, capsys):
+    """Operatöre gösterilen "ne olacak" metni gerçekten olanla aynı olmalı.
+
+    Bayrak kapalıyken ekrana "yanıt gelmezse otomatik yayınlanır" yazıp sonra
+    yayınlamamak, düzelttiğimiz hayalet senaryonun bir başka yüzü. Metin ve
+    davranış aynı değeri (`autonomous_publish`) okumalı.
+    """
+    _director_setup(monkeypatch)  # bayrak KAPALI
+    with patch.multiple(config, TELEGRAM_BOT_TOKEN="tok", TELEGRAM_CHAT_ID="42"), patch(
+        "app.telegram_bot.get_updates", return_value={"result": []}
+    ), patch.object(agent, "generate_video", return_value=FAKE_RESULT):
+        result = _run(director_mode=True)
+
+    out = capsys.readouterr().out
+    assert "otomatik yayınlanır" not in out, "bayrak kapalıyken otomatik yayın vaat edilmiş"
+    assert "taslak olarak kalır" in out
+    assert result is None  # söz tutuldu: yayınlanmadı
+    assert not isolated["youtube"].called
+
+
+def test_director_timeout_notice_promises_publish_when_flag_set(isolated, monkeypatch, capsys):
+    """Bayrak açıkken metin "otomatik yayınlanır" demeli — ve öyle olmalı."""
+    _director_setup(monkeypatch, autonomous=True)
+    with patch.multiple(config, TELEGRAM_BOT_TOKEN="tok", TELEGRAM_CHAT_ID="42"), patch(
+        "app.telegram_bot.get_updates", return_value={"result": []}
+    ), patch(
+        "app.channel_growth.analyze_channel_growth", side_effect=RuntimeError("yok")
+    ), patch.object(agent, "generate_video", return_value=FAKE_RESULT):
+        result = _run(director_mode=True)
+
+    out = capsys.readouterr().out
+    assert "otomatik yayınlanır" in out
+    assert result is not None  # söz tutuldu: yayınlandı
+    assert isolated["youtube"].call_count == 1
+
+
 def test_job_id_is_derived_from_frozen_clock(isolated, monkeypatch):
     """Sabit saatin gerçekten `FROZEN_JOB_ID`'yi ürettiğini doğrular.
 

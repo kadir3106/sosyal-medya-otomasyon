@@ -39,7 +39,7 @@ n8n arayüzü: http://localhost:5678
 
 **Yalnızca tam olarak `true` sayılır.** Kod `...lower() == "true"` ile karşılaştırdığı için `1`, `yes`, `on`, `TRUE ` (sondaki boşluk) ve `True!` **kapalı** sayılır — yazım hatası kazara public yayın başlatmasın diye. Bu davranış `test_publish_gate_blocks_lookalike_values` ile kilitli.
 
-`--director` modunda akış: video üretilir → Telegram'a önizleme + iki buton gider → "Yayınla" yayınlar, "İptal" her zaman kazanır (açık bayrağı bile ezer), 180 saniye yanıt gelmezse tur yayınlamadan biter.
+`--director` modunda akış: video üretilir → Telegram'a önizleme + iki buton gider → "Yayınla" yayınlar, "İptal" her zaman kazanır (açık bayrağı bile ezer), 180 saniye yanıt gelmezse tur **yayınlamadan biter** (bayrak açıksa otomatik yayınlar — onay mesajı hangisinin olacağını önceden söyler).
 
 > ⚠️ Bu bayrak daha önce yalnızca kodda vardı; `.env.example`'da tanımlı olmadığı için pratikte hiçbir kurulum onu açamıyordu ve `run_daily.bat` onay adımını atlayarak (`--now`) çalıştığı için günlük tur video üretip sessizce yayınlamadan bitiyordu.
 

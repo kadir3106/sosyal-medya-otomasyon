@@ -2,8 +2,9 @@
 REM Gunluk otonom tur.
 REM
 REM Varsayilan: `--director` = Telegram onay akisi. Video uretilir, Telegram'a
-REM onizleme + "Yayinla / Iptal" butonlari gider. Onay gelirse hemen yayinlanir;
-REM yanit gelmezse 180 sn sonra otomatik yayinlanir. "Iptal" her zaman kazanir.
+REM onizleme + "Yayinla / Iptal" butonlari gider. "Yayinla" hemen yayinlar;
+REM "Iptal" her zaman kazanir. Yanit gelmezse: ALLOW_AUTONOMOUS_PUBLISH=true ise
+REM otomatik yayinlanir, degilse video yayinlanmadan taslak kalir.
 REM
 REM Bu bayrak daha once YOKTU: `run_daily.bat` dogrudan `--now` cagiriyordu,
 REM yani gunluk otomasyon onay adimini tamamen atliyordu. Ustelik o halde

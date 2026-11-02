@@ -107,6 +107,10 @@ async def execute_daily_run(use_trend: bool = False, director_mode: bool = False
     # Alındı" mesajını gönderiyor, sonra env kapısı yayını yine de engelliyordu.
     # Yani `--director` akışı hiçbir koşulda yayın yapamıyordu.
     approved = False
+    # Tam otonom yayın yetkisi. Fonksiyon başında bir kez okunuyor ki onay
+    # mesajı ile yayın kapısı aynı değere baksın — ikisi çelişirse operatöre
+    # yanlış bilgi verilir.
+    autonomous_publish = os.environ.get("ALLOW_AUTONOMOUS_PUBLISH", "").lower() == "true"
     if director_mode and config.TELEGRAM_BOT_TOKEN and config.TELEGRAM_CHAT_ID:
         from app.telegram_bot import answer_callback_query, get_updates
         print("\n📲 [Yönetmen Modu] Telegram'a onay ve önizleme gönderiliyor...")
@@ -126,7 +130,15 @@ async def execute_daily_run(use_trend: bool = False, director_mode: bool = False
         )
         send_message(config.TELEGRAM_BOT_TOKEN, config.TELEGRAM_CHAT_ID, dir_caption, reply_markup=reply_markup)
 
-        print("⏳ Telegram'dan onay bekleniyor (Maksimum 3 dakika, yanıt gelmezse otomatik yayınlanır)...")
+        # Mesaj operatöre ne olacağını DOĞRU söylemeli: "yanıt gelmezse otomatik
+        # yayınlanır" yalnızca tam otonom mod açıkken doğru. Bayrak kapalıyken
+        # zaman aşımı yayın DEĞİL, taslak demek.
+        timeout_note = (
+            "yanıt gelmezse otomatik yayınlanır"
+            if autonomous_publish
+            else "yanıt gelmezse video yayınlanmadan taslak olarak kalır"
+        )
+        print(f"⏳ Telegram'dan onay bekleniyor (Maksimum 3 dakika, {timeout_note})...")
         start_wait = time.time()
         offset = 0
         while time.time() - start_wait < 180:
@@ -162,7 +174,6 @@ async def execute_daily_run(use_trend: bool = False, director_mode: bool = False
     # onay/iptal düğmeleri hâlâ işler: iptal dalı bu kapıdan önce `return` eder,
     # yani açık bir "İptal" her zaman kazanır.
     # shortcut: platform bazlı politika yok — onaylar ContentJob'a taşınınca yükselt.
-    autonomous_publish = os.environ.get("ALLOW_AUTONOMOUS_PUBLISH", "").lower() == "true"
     if not (approved or autonomous_publish):
         print(
             "🔒 Yayın yetkisi yok — video üretildi ama YAYINLANMADI.\n"
