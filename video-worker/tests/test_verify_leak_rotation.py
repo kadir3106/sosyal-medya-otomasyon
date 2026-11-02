@@ -285,6 +285,64 @@ def test_stray_copy_absent_is_not_a_failure(tmp_path, monkeypatch):
     assert not any("HALA DISKTE" in line for line in lines)
     assert any("yok" in line for line in lines)
 
+def test_sealed_copy_counts_as_closed(tmp_path, monkeypatch):
+    """Mühürlü kopya AÇIK kalem değil — yoksa uyarı hiç bitmez.
+
+    Mühürleme AES-256-GCM ile sır okunamaz hale getiriyor; bunu "hâlâ diskte"
+    diye raporlayan bir doğrulayıcı operatörü yorar ve asıl uyarıyı
+    (döndürme yapılmadı) gürültüye boğar.
+    """
+    import verify_leak_rotation as mod
+
+    src = tmp_path / "yedek.bundle"
+    sealed = tmp_path / "yedek.bundle.sealed"
+    sealed.write_bytes(b"LEAKSEAL...muhurlu...")
+    monkeypatch.setattr(mod, "LEAK_COPIES", [(src, "git bundle")])
+
+    lines = mod.check_stray_copies()
+    text = "\n".join(lines)
+
+    assert "HALA DISKTE" not in text
+    assert "MÜHÜRLÜ" in text
+    assert "✅" in text
+
+
+def test_sealed_plus_plain_still_warns(tmp_path, monkeypatch):
+    """Mühürleme tek başına yetmez: düz kopya duruyorsa sır hâlâ okunabilir.
+
+    Bu senaryo gerçek bir tuzak: `--seal` çalıştırılıp `--delete-originals`
+    unutulursa hem .sealed hem kaynak kalır. "Mühürlü var" diye ✅ vermek
+    yanlış olurdu.
+    """
+    import verify_leak_rotation as mod
+
+    src = tmp_path / "yedek.bundle"
+    src.write_bytes(b"x")
+    (tmp_path / "yedek.bundle.sealed").write_bytes(b"LEAKSEAL...")
+    monkeypatch.setattr(mod, "LEAK_COPIES", [(src, "git bundle")])
+
+    lines = mod.check_stray_copies()
+    text = "\n".join(lines)
+
+    assert "HALA DISKTE" in text
+    assert "DÜZ kopya" in text
+
+
+def test_stray_message_points_to_seal_command(tmp_path, monkeypatch):
+    """Uyarı çözümü de söylemeli — yoksa operatör silmeye gider ve geçmişi kaybeder."""
+    import verify_leak_rotation as mod
+
+    src = tmp_path / "yedek.bundle"
+    src.write_bytes(b"x")
+    monkeypatch.setattr(mod, "LEAK_COPIES", [(src, "git bundle")])
+
+    text = "\n".join(mod.check_stray_copies())
+
+    assert "seal_leak_copies.py" in text
+    assert "delete-originals" in text
+
+
+
 
 def test_capabilities_cover_every_failure_key():
     """Her olası açık kalem için bir yetenek satırı olmalı (sessiz boşluk olmasın)."""

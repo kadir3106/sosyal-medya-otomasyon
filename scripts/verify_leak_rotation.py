@@ -231,22 +231,44 @@ LEAK_COPIES: list[tuple[Path, str]] = [
 
 
 def check_stray_copies() -> list[str]:
-    """Repoda/dışında duran yedek kopyaları ölçer — sır değerini yazdırmadan."""
+    """Repoda/dışında duran yedek kopyaları ölçer — sır değerini yazdırmadan.
+
+    Mühürlenmiş kopya (`<ad>.sealed`) **açık sayılmaz**: `scripts/seal_leak_copies.py`
+    ile AES-256-GCM altına alınmış bir dosyada sır okunamaz. Bu ayrımı yapmayan
+    bir doğrulayıcı, mühürleme yapıldıktan sonra da "açık" derdi — yani
+    operatörü hiç bitmeyen bir uyarıyla yorardı.
+
+    Mühürlü ama kaynağı hâlâ duran dosya uyarı verir: mühürlemek tek başına
+    yetmez, düz kopya silinmedikçe sır okunabilir kalır.
+    """
     lines: list[str] = []
     found = False
     for path, what in LEAK_COPIES:
+        sealed = path.with_name(path.name + ".sealed")
         if not path.exists():
-            lines.append("%-14s yok — ✅" % path.name)
+            if sealed.exists():
+                size_mb = sealed.stat().st_size / 1e6
+                lines.append("%-14s MÜHÜRLÜ (%.1f MB) — ✅ sır okunamaz" % (path.name, size_mb))
+                lines.append("                açmak için parola gerekir "
+                             "(seal_leak_copies.py --open)")
+            else:
+                lines.append("%-14s yok — ✅" % path.name)
             continue
         found = True
         size_mb = path.stat().st_size / 1e6
         lines.append("HALA DISKTE   : %s (%.1f MB)" % (path, size_mb))
         lines.append("                %s" % what)
+        if sealed.exists():
+            lines.append("                [!] mühürlü kopya da var ama DÜZ kopya "
+                         "silinmemiş — sır hâlâ okunabilir")
     if found:
         lines.append("SONUC         : bu kopyalar döndürme tamamlanana kadar sırrı "
                      "okunabilir tutar")
-        lines.append("                Şifreli arşive taşıyın veya silin "
-                     "(docs/SIZINTI_TEMIZLIGI.md §5)")
+        lines.append("                Mühürleyin (sır okunamaz olur, geri dönüş kalır):")
+        lines.append("                  python scripts/seal_leak_copies.py "
+                     "--generate-key \\")
+        lines.append("                      --path \"<yol>\" --seal --delete-originals")
+        lines.append("                Ayrıntı: docs/SIZINTI_TEMIZLIGI.md §5")
     return lines
 
 

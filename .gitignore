@@ -14,6 +14,12 @@
 backups/*
 !backups/.gitkeep
 *.tar.gz
+# Git bundle = tüm geçmişin kopyası; sızan nesneleri (tiktok_session profili,
+# n8n encryptionKey) taşır. Depo içine asla girmemeli.
+*.bundle
+# `scripts/seal_leak_copies.py` çıktısı: mühürlü ama yine de bir yedek kopya.
+# Commit'lenmesi, sırrı şifreli de olsa yaymak olur.
+*.sealed
 video-output/*
 !video-output/.gitkeep
 !video-output/branding/

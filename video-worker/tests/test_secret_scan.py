@@ -93,3 +93,36 @@ def test_main_returns_nonzero_on_finding(tmp_path, monkeypatch):
     (tmp_path / "leak.py").write_text(f'KEY = "{_fake("sk-")}"', encoding="utf-8")
 
     assert scan_main([str(tmp_path)]) == 1
+
+
+
+def test_gitignore_covers_secret_carrying_backups():
+    """Bundle ve mühürlü arşiv **depoya girmemeli**.
+
+    Ölçüm (2026-11-02): bu bölüm önce `*.bundle` `.gitignore`'da diyordu ama
+    `git check-ignore` "TAKİP EDİLEBİLİR" dedi. `*.sealed` hiç yoktu. Yani
+    mühürleme yaptıktan sonra `git add .` o dosyayı sessizce commit'leyebilirdi
+    — sır şifreli de olsa depoya yayılmış olurdu.
+
+    Bu test `CAPABILITIES`'in kapsamadığı boşluğu kilitler: betik sır *değerini*
+    arıyordu, sır *taşıyan dosyanın* depoya girebilir olmasını değil.
+    """
+    repo_root = Path(__file__).resolve().parent.parent.parent
+
+    for name in ("yedek.bundle", "yedek.bundle.sealed", "backups/a.tar.gz.sealed"):
+        result = subprocess.run(
+            ["git", "check-ignore", "-q", name],
+            cwd=str(repo_root),
+        )
+        assert result.returncode == 0, f"{name} .gitignore ile yok sayılmıyor"
+
+
+def test_gitignore_keeps_backups_gitkeep():
+    """`backups/*` geniş bir kural — `.gitkeep` istisnası korunmalı."""
+    repo_root = Path(__file__).resolve().parent.parent.parent
+
+    result = subprocess.run(
+        ["git", "check-ignore", "-q", "backups/.gitkeep"],
+        cwd=str(repo_root),
+    )
+    assert result.returncode != 0, "backups/.gitkeep yok sayılmamalı (dizin boş kalır)"

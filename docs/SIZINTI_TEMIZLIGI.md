@@ -375,16 +375,42 @@ Push'tan sonra başarısız CI koşusunu yeniden tetikleyin (`gh run rerun <id>`
 
 > **Not:** `main`'de `.github/` yok (CI yalnızca feature branch'te tanımlı), o yüzden `main`'e push CI **tetiklemez**. Doğrulama için feature branch'in koşusunu yeniden çalıştırın — `fetch-depth: 0` ile `main`'i de görür.
 
-### 3.11 Yerel yedeği güvene alın, sonra silin
+### 3.11 Yerel yedeği güvene alın (mühürleyin), sonra ölçün
 
 `git bundle` yedeği (131 MB) **sızıntılı nesneleri taşır**: `tiktok_session` profili, `n8n encryptionKey` içeren tarball. Bir yedek dizininizde durması, temizlediğiniz şeyi yeniden yaymanın en kolay yoludur.
+
+**Silmeyin — mühürleyin.** Silmek iki şeyi geri getirilemez biçimde yok eder: bundle, geçmişi geri almanın tek yolu (`git clone yedek.bundle`); tarball ise `verify_leak_rotation.py`'nin ölçüm aracı (silinirse betik çıkış kodu **2** verir).
 
 ```powershell
 # Yeniden yazımın doğru olduğunu teyit ettikten SONRA:
 git reflog expire --expire=now --all
 git gc --prune=now --aggressive
-# bundle'ı şifreli bir arşive taşıyın veya silin
+
+# 1) Mühürle. Parola BİR KEZ stderr'e basılır — parola yöneticinize kaydedin.
+python scripts/seal_leak_copies.py --generate-key `
+    --path ..\sosyal-medya-otomasyon-YEDEK.bundle --seal --delete-originals
+python scripts/seal_leak_copies.py --generate-key `
+    --path backups\otomasyon-yedek-2026-09-05.tar.gz --seal --delete-originals
+
+# 2) Ölç: artık "MÜHÜRLÜ" demeli, "HALA DISKTE" dememeli.
+python scripts/verify_leak_rotation.py
+
+# Geri dönmek gerekirse (parola ile):
+python scripts/seal_leak_copies.py --open `
+    --path ..\sosyal-medya-otomasyon-YEDEK.bundle.sealed --out geri-donus.bundle
 ```
+
+Mühürleme AES-256-GCM + scrypt(n=2¹⁴). Betik **silmeden önce geri açıp bayt bayt karşılaştırır** — "yazdım" demek "okunabilir" demek değildir.
+
+Ölçüm (2026-11-02) — mühürlemenin gerçekten sır sakladığı kanıtlandı:
+
+| Dosya | `json_secret_field` bulgusu |
+| --- | --- |
+| `otomasyon-yedek-2026-09-05.tar.gz` | **1** (`./config` içinde `encryptionKey`) |
+| aynı dosyanın `.sealed` hâli | **0** — arşiv olarak bile açılmıyor |
+
+> **Parolayı kaybederseniz** mühürlü dosya silinmiş sayılır. Parolayı `.sealed` dosyasının yanına **koymayın** — aynı diski kaybetmek ikisini birden götürür.
+
 
 
 ## 4. Sıra özeti (kritik)
@@ -415,6 +441,7 @@ git gc --prune=now --aggressive
 | Arşiv **içindeki** `Cookies`/`Login Data` yolu da yakalanıyor | ✅ madde 31 |
 | JSON alan sırları (`"encryptionKey":"..."`) yakalanıyor | ✅ madde 31 |
 | Disk üzerindeki yedek kopyaları ölçülüyor (`.gitignore` dışı) | ✅ madde 31 |
+| Yedek kopyalar **mühürlenebiliyor** (AES-256-GCM, geri dönüşlü) | ✅ madde 32 |
 | CI'da `history-scan` işi (`fetch-depth: 0`) | ✅ |
 | Baseline: yeni sızıntıyı yakalar, bilineni susturur | ✅ |
 
@@ -445,6 +472,14 @@ yazmak yanlış olurdu — baseline *gerçek* bulgu demek. Bu yüzden dar bir
 5.7 MB'lık n8n veritabanı commit'lenebilirdi), ama **bu dosyalardaki sır ne
 `--history` ne HEAD taraması tarafından görülür**. Bu yüzden ayrı bir ölçüm var:
 
+> **Düzeltme (2026-11-02):** bu bölüm önce "`*.bundle` `.gitignore`'da" diyordu —
+> **yanlıştı**. `git check-ignore` ile ölçüldü: `*.bundle` ve `*.sealed` hiçbir
+> kurala uymuyordu, yani mühürleme çıktısı ve bundle commit'lenebilir durumdaydı.
+> İkisi de eklendi (`.gitignore`). Bu, `CAPABILITIES`'in ölçmediği bir boşluktu:
+> betik sır *değerini* arıyordu, sır *taşıyan dosyanın* depoya girebilir olmasını
+> değil.
+
+
 ```powershell
 python scripts/verify_leak_rotation.py     # "Disk üzerindeki yedek kopyaları" bölümü
 ```
@@ -462,7 +497,41 @@ tek yolu (`git clone` ile dönüş). Yanlış anda çalışan bir betik geri
 getirilemez veri kaybı demek. Karar operatörün; betik yalnızca varlığını ölçer
 ve `CAPABILITIES` tablosunda bunu gerekçesiyle listeler.
 
+### 5.3 Mühürleme — silmeden sırrı kapatmak
+
+Silme ile mühürleme arasındaki fark, "geri dönüş var mı" sorusudur. Mühürleme
+AES-256-GCM + scrypt(n=2¹⁴) kullanır; dosya diskte kalır, okunamaz olur.
+
+Ölçülen (2026-11-02):
+
+| Kontrol | Sonuç |
+| --- | --- |
+| 441 556 B tarball → `.sealed` | 441 609 B (53 B başlık + 16 B GCM tag) |
+| Geri açma | aynı SHA-256 (`9c6f268de18fc52e`) |
+| Orijinalin `json_secret_field` bulgusu | 1 |
+| `.sealed` hâlinin bulgusu | **0** — arşiv olarak bile açılmıyor |
+| Yanlış parola | çıkış 1, hata, çıktı yazılmaz |
+| Kurcalanmış şifreli metin | reddedilir (GCM tag tutmaz) |
+
+**Neden geri açıp karşılaştırıyor:** "yazdım" demek "okunabilir" demek değil.
+`seal_file()` mühürler → diskten geri okur → açar → SHA-256 karşılaştırır →
+**ancak o zaman** kaynağı siler. Bu sıra testle kilitli
+(`test_seal_file_verifies_before_deleting`).
+
+**Neden parola hiçbir yere yazılmıyor:** `.sealed` dosyasının yanına konan bir
+parola dosyası, mühürlemeyi süs haline getirir — aynı disk kaybedilince sır da
+parola da gider, ya da tam tersi ikisi birden bulunur.
+
+**Doğrulayıcı ayrımı biliyor:** `check_stray_copies()` mühürlü kopyayı ✅ sayar,
+ama `.sealed` **ve** düz kopya birlikte duruyorsa uyarır — çünkü
+`--delete-originals` unutulduğunda sır hâlâ okunabilir.
+
+**Kalan risk:** mühürlü arşivin parolası kaybolursa dosya silinmiş sayılır.
+Bu, silmeye göre bir kazanç değil; ama parolayı parola yöneticisinde tutmak
+koşuluyla geri dönüş korunur.
+
 **Kalan risk:** arşiv taraması artık özyinelemeli, ama derinlik 3 ile sınırlı.
 Daha derin bir yedek `nested_archive_unopened` bulgusu üretir — yani sessiz
 kalmaz, ama **elle açılması** gerekir.
+
 
