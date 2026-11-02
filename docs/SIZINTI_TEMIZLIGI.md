@@ -337,7 +337,12 @@ git gc --prune=now --aggressive
 
 ## 4. Sıra özeti (kritik)
 
-1. **Bölüm 2 — döndürme.** Sızıntı zaten public'ti; silmek onu geri almaz. Döndürme asıl güvenlik işidir. ❌ **Yapılmadı — sizin yapmanız gerek.**
+1. **Bölüm 2 — döndürme.** Sızıntı zaten public'ti; silmek onu geri almaz. Döndürme asıl güvenlik işidir. ❌ **Yapılmadı — sizin yapmanız gerek.** Ölçülen üç canlı sır, sırayla:
+   1. **Telegram bot token'ı** → BotFather'da revoke. En yüksek öncelik: token **hâlâ HTTP 200** dönüyor, yani bugün çalışıyor.
+   2. **n8n sahip parolası** (`admin@local.dev`) → bcrypt hash sızdı ve **mevcut parolayla eşleşiyor**; parola değişene kadar arşiv n8n'e giriş demektir.
+   3. **TikTok oturumu** → *log out of all devices*. `sessionid` **2027-03-16**'ya kadar geçerli.
+   
+   Google/Meta/X/OpenRouter anahtarları bu arşivde **yok** (130 tablo tarandı) — onlar için ek iş yok.
 2. **Bölüm 3 — geçmiş silme.** Hijyen; tekrarını engeller. ✅ **Yapıldı** (3.9).
 3. **Bölüm 3.10 — tüm dalları yayınlama.** ✅ **Yapıldı** (bu adım ilk turda atlanmıştı, CI yakaladı).
 4. **Bölüm 3.6 — baseline.** ✅ **Yapıldı** (15 → 8).
