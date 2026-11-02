@@ -289,10 +289,11 @@ CAPABILITIES: list[tuple[str, str, str, str]] = [
     # Silme bilinçli olarak betikleştirilmedi: bu dosyalar geçmişi geri alma
     # yolunun TEK kopyası (`bundle` ile `git clone` geri dönüşü). Otomatik
     # silmek, yanlış anda çalıştığında geri dönüşü olmayan veri kaybı demek.
-    # Kararı operatör verir; betik yalnız varlığını ölçer.
-    ("yedek-kopya", "Elle sil veya şifreli arşive taşı (§5)", "HAYIR",
-     "bundle tek geri dönüş yolu olduğu için silme otomatikleştirilmedi — "
-     "yanlış anda çalışan bir betik geçmişi geri getirilemez biçimde yok eder"),
+    # Kararı operatör verir; betik yalnız varlığını ölçer. Mühürleme (madde 32)
+    # bu boşluğu kapatır: sır okunamaz olur, geri dönüş yolu kalır.
+    ("yedek-kopya", "Mühürle: scripts/seal_leak_copies.py --seal", "HAYIR",
+     "silme otomatikleştirilmedi (bundle tek geri dönüş yolu); mühürleme "
+     "parola ister ve parola diske yazılmaz — kararı operatör verir"),
 ]
 
 
