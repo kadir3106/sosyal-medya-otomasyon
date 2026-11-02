@@ -60,17 +60,20 @@ Sonuç: `{"accessToken": "<46 karakter>"}` — **JSON çıktı, ilk denemede.**
 
 | Sır | Kanıt | Durum |
 | --- | --- | --- |
-| Telegram bot token (`accessToken`, 46 kar.) | `getMe` → **HTTP 200** (bot yanıt veriyor) | ❗ **geçerli** |
+| Telegram bot token (`accessToken`, 46 kar., fp `772d64de`) → `@mkadirmotivasyon_bot` | `getMe` → **HTTP 200** (bot yanıt veriyor) | ❗ **geçerli** |
 | n8n sahip hesabı `admin@local.dev` | `user.password` bcrypt (`$2a$10$…`, 60 kar.) — `.env`'deki **mevcut** `N8N_PASSWORD` ile `checkpw` = **True** | ❗ **geçerli** |
 | TikTok `sessionid` / `sid_guard` | 27 `.tiktok.com` çerezi, 20 `HttpOnly`; `sessionid` → **2027-03-16**, `sid_guard` → **2027-09-12** | ❗ **geçerli** |
 
+> **`.env`'deki token bu değil.** Ayrı ölçüm: `.env TELEGRAM_BOT_TOKEN` → fp `e6094742` → `@kadir_shorts_studio_bot`. İki token **iki ayrı bota** ait ve ikisi de HTTP 200. Yani sızan bot prodüksiyon botu **değil**; `.env`'i değiştirmek gerekmiyor, hatta **zararlı** (çalışan botu bozar). Ayrıntı: Bölüm 2.6.
+
 **Kapsam tam tarandı (130 tablo):** tüm metin kolonlarında `Salted__` blobu arandı → yalnızca **1** tane var, `credentials_entity.data`. `deployment_key` (4 satır), `execution_data`, `workflow_entity`, `variables`, `user_api_keys`, `oauth_*`, `secrets_provider_*` → hepsi temiz. Yani Google/Meta/X/OpenRouter token'ları bu arşivde **yok**; `.env`'dekiler bu sızıntıdan bağımsız.
 
-1. n8n'i durdurun: `docker compose stop n8n`
-2. BotFather → botunuz → **API Token → Revoke current token** → yeni token
-3. Yeni token'ı `.env`'e yazın
-4. **n8n sahip parolasını da değiştirin** — bcrypt hash'i sızdı ve mevcut parolayla eşleşiyor. Parola değişene kadar aynı arşiv n8n'e giriş demektir.
-5. n8n'i **temiz bir volume** ile yeniden kurun: `docker compose down -v n8n` (⚠️ volume silinir)
+1. n8n çalışıyorsa durdurun: `docker compose stop n8n`
+   > Bu makinede Docker motoru **çalışmıyor** (Docker Desktop kurulu değil / `dockerDesktopLinuxEngine` yok) — ölçüldü. Yani bu adım atlanabilir; aşağıdaki panel işleri etkilenmez.
+2. BotFather → **`@mkadirmotivasyon_bot`** → **API Token → Revoke current token**
+   > `.env`'deki `@kadir_shorts_studio_bot` **değil**. Yeni token üretmek gerekmiyor; iptal yeterli.
+3. **n8n sahip parolasını değiştirin** — bcrypt hash'i sızdı ve mevcut parolayla eşleşiyor. Parola değişene kadar aynı arşiv n8n'e giriş demektir.
+4. n8n'i **temiz bir volume** ile yeniden kurun (yalnızca n8n'i yeniden kullanacaksanız): `docker compose down -v n8n` (⚠️ volume silinir)
 
 > n8n'de yeniden girilecek **başka credential yok** (tablo 0). Ama eski `encryptionKey` + veritabanı `backups/` klasöründe **hâlâ diskte** — bunları da silin, yoksa aynı sır okunabilir kalır.
 
@@ -92,8 +95,10 @@ Sonuç: `{"accessToken": "<46 karakter>"}` — **JSON çıktı, ilk denemede.**
 
 1. TikTok → Settings → Security → **Log out of all devices** (yalnızca şifre değiştirmek yetmez; `sid_guard` sunucu tarafında iptal edilmeli)
 2. Şifreyi de değiştirin
-3. Yerel profili silin: `Remove-Item video-output/tiktok_session -Recurse -Force`
-4. Gerekiyorsa yeniden üretin: `python scripts/refresh_tiktok_session.py`
+3. **Bu sıradan sonra** yerel profili silin: `Remove-Item video-output/tiktok_session -Recurse -Force`
+
+   > ⚠️ **Silmeden önce döndürün.** Bu profil prodüksiyonda kullanılıyor: `docker-compose.yml:76` `TIKTOK_SESSION_DIR=/data/tiktok-session` ile `scripts/refresh_tiktok_session.py --upload` üzerinden konteynere aktarılıyor. Döndürmeden silmek yayını durdurur. Sıra: **iptal → şifre → sil → yeniden üret.**
+4. Gerekiyorsa yeniden üretin: `python scripts/refresh_tiktok_session.py --upload`
 
 
 ### 2.3 Google / YouTube
@@ -118,12 +123,28 @@ Sonuç: `{"accessToken": "<46 karakter>"}` — **JSON çıktı, ilk denemede.**
 1. https://developer.x.com/en/portal/dashboard → uygulamanız → **Keys and tokens** → *Revoke* (access token + secret, refresh token)
 2. Yeniden üretin
 
-### 2.6 Telegram bot
+### 2.6 Telegram bot — **iki ayrı bot var, karıştırmayın**
 
-`TELEGRAM_BOT_TOKEN` yapılandırılmış.
+Ölçüm (2026-11-02): sızan token ile `.env`'deki token **aynı değil**, ve ikisi de canlı:
 
-1. [@BotFather](https://t.me/BotFather) → `/mybots` → botunuz → **API Token** → *Revoke current token*
-2. Yeni token'ı `.env`'e yazın
+| Token | Bot | Durum | Ne yapılmalı |
+| --- | --- | --- | --- |
+| Sızan (n8n arşivindeki `accessToken`, fp `772d64de`) | `@mkadirmotivasyon_bot` | HTTP 200 — **canlı** | ❗ BotFather'da **iptal et** |
+| `.env`'deki `TELEGRAM_BOT_TOKEN` (fp `e6094742`) | `@kadir_shorts_studio_bot` | HTTP 200 — **canlı** | ✅ **DOKUNMAYIN** |
+
+> ⚠️ Bu bölümün önceki hâli "yeni token'ı `.env`'e yazın" diyordu. **Bu yanlıştı ve çalışan botu bozardı.** Sızan bot prodüksiyon botu değil; `.env`'deki token sızmamış ve hâlâ geçerli. `.env`'e dokunmak gerekmez.
+
+1. [@BotFather](https://t.me/BotFather) → `/mybots` → **`@mkadirmotivasyon_bot`** (`.env`'deki botu değil) → **API Token** → *Revoke current token*
+2. İptal sonrası doğrulama: aşağıdaki betik `HTTP 401` dönmelidir
+
+```powershell
+# Sizan token gercekten oldu mu? (arsivden okuyup getMe cagirir)
+python scripts/verify_leak_rotation.py --telegram
+```
+
+3. **`.env`'i değiştirmeyin.** Yeni token gerekmiyor; iptal yeterli. Botu silmek istiyorsanız BotFather → *Delete Bot* de dönmeyi imkânsız kılar.
+
+> Aynı token `.env`'de `@kadir_shorts_studio_bot` için de kullanılmıyor mu diye kontrol edildi: hayır, iki ayrı değer (fp `772d64de` ≠ `e6094742`).
 
 ### 2.7 FAL (görsel üretim)
 
@@ -338,11 +359,13 @@ git gc --prune=now --aggressive
 ## 4. Sıra özeti (kritik)
 
 1. **Bölüm 2 — döndürme.** Sızıntı zaten public'ti; silmek onu geri almaz. Döndürme asıl güvenlik işidir. ❌ **Yapılmadı — sizin yapmanız gerek.** Ölçülen üç canlı sır, sırayla:
-   1. **Telegram bot token'ı** → BotFather'da revoke. En yüksek öncelik: token **hâlâ HTTP 200** dönüyor, yani bugün çalışıyor.
+   1. **Telegram bot token'ı** → `@mkadirmotivasyon_bot` için BotFather'da revoke. En yüksek öncelik: token **hâlâ HTTP 200** dönüyor, yani bugün çalışıyor. ⚠️ `.env`'deki `@kadir_shorts_studio_bot` token'ı **değil** (fp `772d64de` ≠ `e6094742`) — yanlış botu iptal etmek prodüksiyonu bozar.
    2. **n8n sahip parolası** (`admin@local.dev`) → bcrypt hash sızdı ve **mevcut parolayla eşleşiyor**; parola değişene kadar arşiv n8n'e giriş demektir.
    3. **TikTok oturumu** → *log out of all devices*. `sessionid` **2027-03-16**'ya kadar geçerli.
-   
+
    Google/Meta/X/OpenRouter anahtarları bu arşivde **yok** (130 tablo tarandı) — onlar için ek iş yok.
+
+   **Durumu ölçmek için:** `python scripts/verify_leak_rotation.py` — 0 = hepsi etkisiz, 1 = açık var, 2 = ölçülemedi. Her adımdan sonra çalıştırın; panelde yapılan işi tahmin etmek yerine doğrular.
 2. **Bölüm 3 — geçmiş silme.** Hijyen; tekrarını engeller. ✅ **Yapıldı** (3.9).
 3. **Bölüm 3.10 — tüm dalları yayınlama.** ✅ **Yapıldı** (bu adım ilk turda atlanmıştı, CI yakaladı).
 4. **Bölüm 3.6 — baseline.** ✅ **Yapıldı** (15 → 8).

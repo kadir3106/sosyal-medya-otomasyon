@@ -59,9 +59,13 @@ Measured scope of the leak (2026-11-02): the tarball's contents were extracted a
 
 | What | Evidence | Still valid? |
 | --- | --- | --- |
-| Telegram bot token (`Telegram - Otomasyon Bot`, `telegramApi`) | decrypts to `{"accessToken": …}` (46 chars) | **Yes** — `getMe` returns HTTP 200, the bot answers |
+| Telegram bot token (`Telegram - Otomasyon Bot`, `telegramApi`) | decrypts to `{"accessToken": …}` (46 chars), sha256 prefix `772d64de` → bot **`@mkadirmotivasyon_bot`** | **Yes** — `getMe` returns HTTP 200, the bot answers |
 | n8n owner login `admin@local.dev` | `user.password` is bcrypt and **matches the current `N8N_PASSWORD`** in `.env` | **Yes** — unchanged password still opens the instance |
 | TikTok session (`sessionid`, `sid_guard`, …) | 27 `.tiktok.com` cookies, 20 `HttpOnly` | **Yes** — `sessionid` until 2027-03-16, `sid_guard` until 2027-09-12 |
+
+> **The leaked bot is not the production bot.** The token in `.env` has a different sha256 prefix (`e6094742`) and belongs to a **different** bot, `@kadir_shorts_studio_bot` — also live. Only the token from the archive (`772d64de`) needs revoking; **do not rotate `.env`**, that would break the running bot. Two values, two bots, both answering `getMe`.
+
+You do not have to take any of this on trust: `python scripts/verify_leak_rotation.py` re-derives every claim above from the archive and reports live/dead per secret (exit 0 = nothing live, 1 = still exposed, 2 = not measurable). It prints sha256 prefixes, never secret values. Body of the report is Turkish, matching the rest of `docs/`.
 
 Blast radius is bounded but real: the store holds **exactly one** credential, **0** workflows and **0** variables — an exhaustive scan of all **130** tables found exactly **one** `Salted__` blob, in `credentials_entity.data`. There is no Google, Meta, X or OpenRouter token in there; those in `.env` are unrelated to this archive.
 

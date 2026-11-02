@@ -1,0 +1,222 @@
+"""Döndürme doğrulayıcısı — çözüyor mu, doğru hüküm veriyor mu?
+
+Bu betiğin tek işi "sır hâlâ geçerli mi" sorusunu **ölçmek**. Yanlış hüküm
+verirse ya yapılmamış bir döndürmeyi "tamam" sayar (tehlikeli) ya da
+yapılmışı "açık" gösterir (gürültü). Bu yüzden çözme yolu gerçek bir
+şifreleme turuyla test ediliyor: n8n'in `CipherAes256CBC.encrypt`'i
+burada yeniden üretilip `decrypt_n8n` ile geri açılıyor.
+
+Sırlar literal yazılmıyor — dosya izlenen bir dosya, tarayıcı kendi
+fixture'ını bulgu olarak raporlamasın (bkz. test_secret_scan.py).
+"""
+import base64
+import hashlib
+import io
+import sys
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "scripts"))
+
+from verify_leak_rotation import (  # noqa: E402
+    MAGIC,
+    TIKTOK_PROFILE,
+    check_n8n_password,
+    check_telegram,
+    check_tiktok,
+    decrypt_n8n,
+    fp,
+    read_env,
+)
+
+
+def _needs_crypto():
+    """`cryptography` CI'da `requirements.txt` içinde YOK — test atlanmalı, düşmemeli.
+
+    `scripts/verify_leak_rotation.py` bunu tembel import ediyor, ama şifreleme
+    turu testi gerçek AES ister. Atlama sessiz olmadığı için (skipped sayısı
+    görünür) körlük üretmez.
+    """
+    pytest.importorskip("cryptography.hazmat.primitives.ciphers")
+
+
+def _encrypt_like_n8n(plaintext: str, key: str, salt: bytes = b"12345678") -> str:
+    """n8n `CipherAes256CBC.encrypt` — testin referans uygulaması.
+
+    Node'un `cipher.update()`'u PKCS7 padding'i **otomatik** ekler; Python'un
+    `cryptography` paketi eklemez. Burada elle ekleniyor, yoksa blok hizalama
+    hatası alınır (ölçüldü: ilk denemede tam bu oldu).
+    """
+    _needs_crypto()
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+    password = key.encode("latin-1") + salt
+    h1 = hashlib.md5(password).digest()
+    h2 = hashlib.md5(h1 + password).digest()
+    derived_key = h1 + h2
+    iv = hashlib.md5(h2 + password).digest()
+
+    raw = plaintext.encode()
+    pad = 16 - len(raw) % 16
+    raw += bytes([pad]) * pad
+
+    encryptor = Cipher(algorithms.AES(derived_key), modes.CBC(iv)).encryptor()
+    body = encryptor.update(raw) + encryptor.finalize()
+    return base64.b64encode(MAGIC + salt + body).decode()
+
+
+def test_fingerprint_is_stable_and_not_the_secret():
+    value = "".join(["test", "value", "123"])
+    assert fp(value) == fp(value)
+    assert len(fp(value)) == 8
+    assert value not in fp(value)
+
+
+def test_roundtrip_matches_n8n_format():
+    fake_key = "k" * 32
+    payload = '{"accessToken": "' + "t" * 46 + '"}'
+    cipher = _encrypt_like_n8n(payload, fake_key)
+    assert decrypt_n8n(cipher, fake_key) == payload
+
+
+def test_decrypt_rejects_foreign_format():
+    """Base64 ama n8n değil: sessizce çöp döndürmek yerine hata vermeli."""
+    _needs_crypto()
+
+    import json as _json
+
+    plain_b64 = base64.b64encode(_json.dumps({"a": "b"}).encode()).decode()
+    with pytest.raises(ValueError, match="Salted__"):
+        decrypt_n8n(plain_b64, "k" * 32)
+
+
+def test_decrypt_rejects_wrong_key():
+    """Yanlış anahtar padding kontrolünde yakalanmalı, çöp döndürmemeli."""
+    _needs_crypto()
+
+    cipher = _encrypt_like_n8n("gizli-icerik", "a" * 32)
+    with pytest.raises(ValueError):
+        decrypt_n8n(cipher, "b" * 32)
+
+
+def test_read_env_handles_bom(tmp_path, monkeypatch):
+    """BOM'lu `.env` ilk anahtarı gizlememeli — ilk ölçümde tam bu olmuştu."""
+    import verify_leak_rotation as mod
+
+    env_file = tmp_path / ".env"
+    env_file.write_bytes(b"\xef\xbb\xbfTELEGRAM_BOT_TOKEN=abc\nN8N_PASSWORD=pw\n")
+    monkeypatch.setattr(mod, "ROOT", tmp_path)
+
+    parsed = mod.read_env()
+    assert parsed["TELEGRAM_BOT_TOKEN"] == "abc"
+    assert parsed["N8N_PASSWORD"] == "pw"
+
+
+def test_check_telegram_flags_leaked_token(monkeypatch):
+    """Sızan token canlıysa 'HALA GECERLI', 401 ise 'iptal' hükmü verilmeli.
+
+    Ağa çıkılmıyor: `urlopen` sahte. Asıl önemli olan, **hangi token'ın**
+    sorgulandığı — sızan ile `.env`'deki karışırsa yanlış bot iptal edilir.
+    """
+    import verify_leak_rotation as mod
+
+    fake_key = "k" * 32
+    leaked = "9" * 46
+    current = "8" * 46
+    seen: list[str] = []
+
+    class _Resp:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return b'{"ok": true, "result": {"username": "leaked_bot"}}'
+
+    def fake_urlopen(url, timeout=15):
+        seen.append(url)
+        return _Resp()
+
+    monkeypatch.setattr(mod.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(
+        mod, "decrypt_n8n",
+        lambda data, key: '{"accessToken": "%s"}' % leaked)
+
+    creds = [{"type": "telegramApi", "data": "x"}]
+    lines = mod.check_telegram(fake_key, creds, {"TELEGRAM_BOT_TOKEN": current})
+
+    assert any("HALA GECERLI" in line for line in lines)
+    assert any("aynı mı: False" in line for line in lines)
+    # Sızan token 401 verirse "iptal edilmiş" denmeli.
+    assert leaked in seen[0] and current in seen[1]
+
+
+def test_check_telegram_reports_revoked_token(monkeypatch):
+    """Döndürme başarılıysa (HTTP 401) betik bunu 'iptal' olarak raporlamalı."""
+    import urllib.error
+
+    import verify_leak_rotation as mod
+
+    def fake_urlopen(url, timeout=15):
+        raise urllib.error.HTTPError(url, 401, "Unauthorized", {}, None)
+
+    monkeypatch.setattr(mod.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(mod, "decrypt_n8n", lambda data, key: '{"accessToken": "abc"}')
+
+    lines = mod.check_telegram("k" * 32, [{"type": "telegramApi", "data": "x"}],
+                               {"TELEGRAM_BOT_TOKEN": ""})
+    assert not any("HALA GECERLI" in line for line in lines)
+    assert any("HTTP 401" in line for line in lines)
+
+
+def test_check_n8n_password_detects_unchanged_password(monkeypatch):
+    """Arşivdeki hash mevcut parolayla açılıyorsa açıkça söylenmeli."""
+    bcrypt = __import__("pytest").importorskip("bcrypt")
+
+    stored = bcrypt.hashpw(b"mevcut-parola", bcrypt.gensalt()).decode()
+    lines = check_n8n_password({"email": "a@b.c", "password": stored},
+                               {"N8N_PASSWORD": "mevcut-parola"})
+    assert any("HALA AYNI" in line for line in lines)
+
+    lines = check_n8n_password({"email": "a@b.c", "password": stored},
+                               {"N8N_PASSWORD": "farkli-parola"})
+    assert not any("HALA AYNI" in line for line in lines)
+
+
+def test_check_tiktok_reports_missing_profile(tmp_path, monkeypatch):
+    import verify_leak_rotation as mod
+
+    monkeypatch.setattr(mod, "TIKTOK_PROFILE", tmp_path / "yok")
+    lines = mod.check_tiktok()
+    assert any("silinmiş" in line for line in lines)
+
+
+def test_main_exit_codes(monkeypatch):
+    """0 = her şey etkisiz, 1 = açık var, 2 = ölçülemedi."""
+    import verify_leak_rotation as mod
+
+    monkeypatch.setattr(mod, "read_env", lambda: {})
+    monkeypatch.setattr(mod, "load_n8n_store", lambda: ("k" * 32, [], {}))
+    monkeypatch.setattr(mod, "check_telegram", lambda *a: ["SIZAN : HTTP 401 iptal"])
+    monkeypatch.setattr(mod, "check_n8n_password", lambda *a: ["SONUC : değişmiş"])
+    monkeypatch.setattr(mod, "check_tiktok", lambda: ["profil silinmiş"])
+    assert mod.main([]) == 0
+
+    monkeypatch.setattr(mod, "check_telegram", lambda *a: ["SIZAN : HTTP 200  >>> HALA GECERLI <<<"])
+    assert mod.main([]) == 1
+
+
+def test_main_returns_2_when_archive_missing(monkeypatch):
+    import verify_leak_rotation as mod
+
+    def boom():
+        raise FileNotFoundError("arşiv yok")
+
+    monkeypatch.setattr(mod, "read_env", lambda: {})
+    monkeypatch.setattr(mod, "load_n8n_store", boom)
+    assert mod.main([]) == 2
