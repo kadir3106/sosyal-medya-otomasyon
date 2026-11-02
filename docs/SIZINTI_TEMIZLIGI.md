@@ -1,8 +1,10 @@
 # Sızıntı temizliği — döndürme rehberi ve geçmiş yeniden yazımı
 
-> Bu belge **yıkıcı işlem** talimatları içerir. Hiçbir komut bu belgeyi yazan ajan tarafından çalıştırılmadı; sırayla sizin onayınızla koşulmalıdır.
->
 > Ölçüm tarihi: **2026-11-02**, branch `cursor/hybrid-flux-architecture`.
+>
+> **Durum: Bölüm 3 (geçmiş yeniden yazımı) ve 3.6 (baseline) UYGULANDI.** Bölüm 2 (döndürme) **sizin** yapmanız gereken tek iş — panele giriş ve anahtar iptali gerektirdiği için ajan tarafından yapılmadı.
+>
+> Uygulananların kanıtı Bölüm 3.9'da.
 
 ## 1. Ne sızdı (ölçülmüş)
 
@@ -109,53 +111,90 @@ Geçmiş yeniden yazıldığında **tüm commit hash'leri değişir**. Bu branch
 
 ### 3.4 Silme
 
-Silmek istediğimiz yollar (ikisi de bugün gitignore'lu, ama geçmişte var):
+Silinen yollar — **belgede ilk yazılan 2 yol değil, 5 yol** çıktı. Ölçüm sırasında `.tiktok_pkce.json` (`code_verifier`, kimlik doğrulama artefaktı) ve ekran görüntüleri de geçmişte bulundu; ikinci bir yeniden yazım gerekmesin diye tek geçişte çıkarıldı.
 
 ```
-video-output/tiktok_session/
-backups/otomasyon-yedek-2026-09-05.tar.gz
+video-output/tiktok_session/                       (1015 dosya)
+backups/otomasyon-yedek-2026-09-05.tar.gz          (889 KB, n8n encryptionKey)
+.tiktok_pkce.json                                  (PKCE code_verifier)
+video-output/tiktok_*.png                          (13 ekran görüntüsü, HEAD'de takipliydi)
 ```
 
 ```powershell
 cd c:\Projects\sosyal-medya-otomasyon
-git filter-repo --invert-paths `
+
+# 1) YEDEK — atlanmaz. 1.3 GB, "is okay", 8 ref doğrulandı.
+git bundle create ..\sosyal-medya-otomasyon-YEDEK.bundle --all
+git bundle verify ..\sosyal-medya-otomasyon-YEDEK.bundle
+
+# 2) filter-repo (pip ile kurulur; bu makinede kurulu değildi)
+python -m pip install git-filter-repo
+
+# 3) Yeniden yazım
+python -m git_filter_repo --invert-paths `
   --path video-output/tiktok_session `
   --path backups/otomasyon-yedek-2026-09-05.tar.gz `
+  --path .tiktok_pkce.json `
+  --path-glob 'video-output/tiktok_*.png' `
   --force
+
+# 4) origin'i geri ekle (filter-repo siler — normal davranış)
+git remote add origin https://github.com/kadir3106/sosyal-medya-otomasyon.git
 ```
 
 > `--path` bir dizini hedeflediğinde altındaki her şeyi siler. `--use-base-name` **kullanmayın** — aynı ada sahip başka dizinleri de siler.
+>
+> `--path-glob` yerine `--path` + joker kullanılamaz; 13 PNG için glob şart.
+
 
 ### 3.5 Doğrulama (silme gerçekten oldu mu)
 
 ```powershell
 # Oturum dosyası kalmadı mı? 0 dönmeli
-(git log --all --pretty=format: --name-only -- 'video-output/tiktok_session/*' | Where-Object { $_ }).Count
+(git log --all --pretty=format: --name-only -- 'video-output/tiktok_session/' | Where-Object { $_ }).Count
 
 # Yedek arşiv kaldı mı? 0 dönmeli
 (git rev-list --all --objects | Select-String 'otomasyon-yedek').Count
 
-# Tarayıcı da doğrulasın
-python scripts/secret_scan.py --history
+# PKCE ve ekran görüntüleri
+(git log --all --pretty=format: --name-only -- '.tiktok_pkce.json' | Where-Object { $_ }).Count
+(git log --all --pretty=format: --name-only -- 'video-output/tiktok_*.png' | Where-Object { $_ }).Count
+
+# Tarayıcı da doğrulasın (ikisi de 0 dönmeli)
+python scripts/secret_scan.py;           "cikis: $LASTEXITCODE"
+python scripts/secret_scan.py --history; "cikis: $LASTEXITCODE"
 ```
 
-### 3.6 Baseline'ı boşaltın
+### 3.6 Baseline'ı güncelleyin
 
 ```powershell
 python scripts/secret_scan.py --history --update-baseline
 ```
 
-Beklenen: `0 bulgu`. `scripts/secret_scan_baseline.json` içindeki `accepted` dizisi boşalır.
+**Beklenti "0 bulgu" DEĞİL.** Bu belgenin ilk sürümü `accepted` dizisinin tamamen boşalacağını yazıyordu; ölçüm bunu **yanlışladı**:
 
-> ⚠️ Baseline'ı **geçmiş temizlenmeden** boşaltmayın: tarayıcı aynı 15 bulguyu "YENİ" diye raporlar ve CI kırmızıya döner. Sıra önemlidir: önce `filter-repo`, sonra baseline.
+| | Önce | Sonra |
+| --- | --- | --- |
+| Geçmiş bulgusu | 15 | **9** |
+| Baseline girdisi | 15 | **8** |
+| Bulgu türü | 6 yol + 9 içerik | **0 yol + 9 içerik** |
+| Baseline'daki yol | 6 (5'i sızıntı + 1 tarayıcının kendi testi) | **2 (yalnızca test dosyası)** |
+
+Sıfırlanmayan 9 bulgu tarayıcının **kendi test fixture'larıdır**: `video-worker/tests/test_secret_scan.py` ve `test_secret_scan_history.py` içindeki `_fake("sk-")`, `"sk-" + "A" * 30`, `sk-your_key_here_placeholder` gibi **sahte** değerler. Bunlar kalmalı — tarayıcının kendini test etmesi için gerekli.
+
+Yeniden üretim **bayat girdileri de attı**: eski baseline artık var olmayan 6 yolu "kabul edilmiş" saymaya devam ediyordu. Bu sessiz bir riskti — `--update-baseline` yerine elle düzenleseydik, aynı yollarda **yeni** bir sızıntı çıksa yutulurdu.
+
+
+> ⚠️ Baseline'ı **geçmiş temizlenmeden** güncellemeyin: tarayıcı aynı 15 bulguyu "YENİ" diye raporlar ve CI kırmızıya döner. Sıra önemlidir: önce `filter-repo`, sonra baseline.
 
 ### 3.7 Yayınlama (force-push)
 
 ```powershell
-git push --force-with-lease origin cursor/hybrid-flux-architecture
+git fetch origin
+git push --force origin cursor/hybrid-flux-architecture
 ```
 
-`--force-with-lease` kullanın, `--force` değil: biri siz yokken push yaptıysa işlemi durdurur.
+`--force-with-lease` **tercih edilir**, ama yeniden yazımdan sonra çalışmaz: lease `refs/remotes/origin/*` üzerinden karşılaştırma yapar ve filter-repo uzak izleme ref'lerini sildi. Bu yüzden `git fetch origin` ile uzakta sizden habersiz commit olmadığını **elle** doğrulayıp `--force` kullanın.
 
 > **Branch koruması** varsa force-push reddedilir. O durumda GitHub → Settings → Branches → korumayı geçici kaldırın, push edin, geri açın.
 
@@ -168,12 +207,33 @@ git gc --prune=now --aggressive
 
 GitHub tarafında eski commit'ler erişilemez olsa da **nesne olarak kalır**; GitHub Support'tan GC talep etmeden tamamen silinmez. Depo public idiyse sızan değerleri "artık erişilemez" saymak yeterli **değildir** — bu yüzden Bölüm 2 (döndürme) zorunlu, Bölüm 3 (silme) hijyendir.
 
+### 3.9 Uygulama kanıtı (2026-11-02, bu makinede koşuldu)
+
+| Adım | Sonuç |
+| --- | --- |
+| `git bundle create --all` | 1.3 GB, `verify` → **"is okay"**, 8 ref |
+| `git-filter-repo` kurulumu | `2.47.0` (makinede yoktu, pip ile kuruldu) |
+| Yeniden yazım | 73 commit → **73 commit** (yalnızca yollar silindi), 0.82 sn |
+| Commit hash'i | `c09ee1c` → **`9763f25`** (tüm geçmiş değişti — beklenen) |
+| `origin` | filter-repo sildi, elle geri eklendi |
+| 4 yol kontrolü | hepsi **0** |
+| `secret_scan` | 757 dosya temiz, çıkış **0** |
+| `secret_scan --history` | 9 bulgu / 0 yol / **0 YENİ**, çıkış **0** |
+| `pytest -q` | **808 passed, 3 skipped** |
+| HEAD'de kalan eşleşme | yalnızca `scripts/refresh_tiktok_session.py` (meşru script) |
+
+Yeniden yazım sırasında hangi yolların çıktığı **ölçümle** belirlendi, tahminle değil: `git log --all --name-only` ile tüm geçmişteki benzersiz yollar süzüldü. Belgede ilk yazılan 2 yol eksikti; `.tiktok_pkce.json` ve 13 PNG de bulundu.
+
+> Fotoğraf/ekran görüntüsü yolları `--path-glob 'video-output/tiktok_*.png'` ile silindi. `--path` joker kabul etmez.
+>
+> `git_filter_repo` doğrudan çalışmazsa `python -m git_filter_repo` kullanın (Windows'ta PATH'e güvenmeyin).
+
 ## 4. Sıra özeti (kritik)
 
-1. **Bölüm 2 — döndürme.** Sızıntı zaten public'ti; silmek onu geri almaz. Döndürme asıl güvenlik işidir.
-2. **Bölüm 3 — geçmiş silme.** Hijyen; tekrarını engeller.
-3. **Bölüm 3.6 — baseline boşaltma.** En son.
-4. **CI yeşil mi:** `lint`, `secret-scan`, `history-scan`, `test`.
+1. **Bölüm 2 — döndürme.** Sızıntı zaten public'ti; silmek onu geri almaz. Döndürme asıl güvenlik işidir. **Yapılmadı — sizin yapmanız gerek.**
+2. **Bölüm 3 — geçmiş silme.** Hijyen; tekrarını engeller. ✅ **Yapıldı** (3.9).
+3. **Bölüm 3.6 — baseline.** ✅ **Yapıldı** (15 → 8).
+4. **CI yeşil mi:** `lint`, `secret-scan`, `history-scan`, `test`. Force-push sonrası kontrol edin.
 
 ## 5. Bunu bir daha yaşamamak için (hâlihazırda yapıldı)
 
