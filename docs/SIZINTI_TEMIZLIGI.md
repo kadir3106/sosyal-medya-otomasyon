@@ -221,6 +221,10 @@ GitHub tarafında eski commit'ler erişilemez olsa da **nesne olarak kalır**; G
 | `secret_scan --history` | 9 bulgu / 0 yol / **0 YENİ**, çıkış **0** |
 | `pytest -q` | **808 passed, 3 skipped** |
 | HEAD'de kalan eşleşme | yalnızca `scripts/refresh_tiktok_session.py` (meşru script) |
+| Uzak `tiktok_session` (API) | **404** |
+| Uzak `backups/` (API) | yalnızca `.gitkeep` |
+| Tüm dallar force-push | `main` `d815276`→`e8c7178`, feature `c09ee1c`→`77b2caf`, kling + visual-relevance yeni |
+| CI (`41405401882`, yeniden koşu) | **4/4 yeşil:** lint, test, secret-scan, history-scan |
 
 Yeniden yazım sırasında hangi yolların çıktığı **ölçümle** belirlendi, tahminle değil: `git log --all --name-only` ile tüm geçmişteki benzersiz yollar süzüldü. Belgede ilk yazılan 2 yol eksikti; `.tiktok_pkce.json` ve 13 PNG de bulundu.
 
@@ -228,12 +232,62 @@ Yeniden yazım sırasında hangi yolların çıktığı **ölçümle** belirlend
 >
 > `git_filter_repo` doğrudan çalışmazsa `python -m git_filter_repo` kullanın (Windows'ta PATH'e güvenmeyin).
 
+### 3.10 Tek dalı yeniden yazmak YETMEZ (bu turda yaşandı)
+
+İlk `filter-repo` yalnızca yerel repoyu yeniden yazdı. `--all` kullandım, ama **sonra yalnızca `cursor/hybrid-flux-architecture` push edildi**. Sonuç:
+
+- Feature branch temizlendi (`77b2caf`), CI'a gitti,
+- ama `main` **hâlâ `d815276`** = eski geçmiş, sızıntı yerinde,
+- CI `actions/checkout` (tüm dalları çeker) + `fetch-depth: 0` ile eski `main`'i gördü,
+- **`history-scan` kırmızı:** `15 bulgu (6 yol, 9 içerik); 6 YENİ`.
+
+Bu ilk bakışta "düzeltme işe yaramadı" gibi görünüyor; aslında düzeltme doğruydu, **yayını eksikti**.
+
+```powershell
+# Yerelde hangi dallar var ve hepsi temiz mi?
+git for-each-ref --format='%(refname:short) %(objectname:short)' refs/heads
+# Uzakta hangi dallar var? (yerel liste yanıltır)
+gh api 'repos/<owner>/<repo>/branches' --jq '.[] | .name + " = " + .commit.sha'
+```
+
+Sonra **her** dalı force-push edin:
+
+```powershell
+git push --force origin main
+git push --force origin <diger-dallar>
+```
+
+Doğrulama (hepsi 0 dönmeli):
+
+```powershell
+foreach ($b in 'main','cursor/hybrid-flux-architecture') {
+  "$b : " + @(git log $b --pretty=format: --name-only -- 'video-output/tiktok_session/' | Where-Object { $_ }).Count
+}
+```
+
+Push'tan sonra başarısız CI koşusunu yeniden tetikleyin (`gh run rerun <id>`); `history-scan` bu kez tüm dallarda temiz geçmiş görür.
+
+> **Not:** `main`'de `.github/` yok (CI yalnızca feature branch'te tanımlı), o yüzden `main`'e push CI **tetiklemez**. Doğrulama için feature branch'in koşusunu yeniden çalıştırın — `fetch-depth: 0` ile `main`'i de görür.
+
+### 3.11 Yerel yedeği güvene alın, sonra silin
+
+`git bundle` yedeği (1.3 GB) **sızıntılı nesneleri taşır**: `tiktok_session` profili, `n8n encryptionKey` içeren tarball. Bir yedek dizininizde durması, temizlediğiniz şeyi yeniden yaymanın en kolay yoludur.
+
+```powershell
+# Yeniden yazımın doğru olduğunu teyit ettikten SONRA:
+git reflog expire --expire=now --all
+git gc --prune=now --aggressive
+# bundle'ı şifreli bir arşive taşıyın veya silin
+```
+
+
 ## 4. Sıra özeti (kritik)
 
-1. **Bölüm 2 — döndürme.** Sızıntı zaten public'ti; silmek onu geri almaz. Döndürme asıl güvenlik işidir. **Yapılmadı — sizin yapmanız gerek.**
+1. **Bölüm 2 — döndürme.** Sızıntı zaten public'ti; silmek onu geri almaz. Döndürme asıl güvenlik işidir. ❌ **Yapılmadı — sizin yapmanız gerek.**
 2. **Bölüm 3 — geçmiş silme.** Hijyen; tekrarını engeller. ✅ **Yapıldı** (3.9).
-3. **Bölüm 3.6 — baseline.** ✅ **Yapıldı** (15 → 8).
-4. **CI yeşil mi:** `lint`, `secret-scan`, `history-scan`, `test`. Force-push sonrası kontrol edin.
+3. **Bölüm 3.10 — tüm dalları yayınlama.** ✅ **Yapıldı** (bu adım ilk turda atlanmıştı, CI yakaladı).
+4. **Bölüm 3.6 — baseline.** ✅ **Yapıldı** (15 → 8).
+5. **CI yeşil mi:** `lint`, `secret-scan`, `history-scan`, `test`. ✅ **4/4.**
 
 ## 5. Bunu bir daha yaşamamak için (hâlihazırda yapıldı)
 
