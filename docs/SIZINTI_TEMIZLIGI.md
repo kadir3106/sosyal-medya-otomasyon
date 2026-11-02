@@ -93,12 +93,43 @@ Sonuç: `{"accessToken": "<46 karakter>"}` — **JSON çıktı, ilk denemede.**
 
 > Yani oturum "eski" değil: bugünden **~4.5 ay** daha geçerli bir `sessionid` var. Çerezler Chromium'un DPAPI/AES-GCM korumasıyla şifreli ama `Local State` de aynı profilde olduğu için aynı makinede **birlikte** açılabilir — arşivin n8n için geçerli olan mantığı burada da geçerli.
 
-1. TikTok → Settings → Security → **Log out of all devices** (yalnızca şifre değiştirmek yetmez; `sid_guard` sunucu tarafında iptal edilmeli)
-2. Şifreyi de değiştirin
+**Çerez meta verisi yetmedi, oturum canlı olarak da denendi (2026-11-02):** profil
+kopyalanıp (asıl profil yazmaya karşı korunarak) headless Chromium ile
+`https://www.tiktok.com/` açıldı → giriş duvarı **yok**, `sessionid`,
+`sessionid_ss`, `sid_tt` çerezleri mevcut, sayfa normal akışta yüklendi. Yani
+çerezler yalnızca "süresi geçmemiş" değil, **çalışır durumda**. Bu, iptal adımının
+atlanabilir olmadığını kanıtlar.
+
+1. **Telefonda TikTok uygulaması** → Profil → ☰ → Settings and privacy → **Security and login** → **Log out of all devices**
+   > Web'de yok — Bölüm 2.1c'de ölçüldü. Yalnızca şifre değiştirmek yetmez;
+   > `sid_guard` sunucu tarafında iptal edilmeli.
+2. Şifreyi de değiştirin (aynı menü: **Password**)
 3. **Bu sıradan sonra** yerel profili silin: `Remove-Item video-output/tiktok_session -Recurse -Force`
 
    > ⚠️ **Silmeden önce döndürün.** Bu profil prodüksiyonda kullanılıyor: `docker-compose.yml:76` `TIKTOK_SESSION_DIR=/data/tiktok-session` ile `scripts/refresh_tiktok_session.py --upload` üzerinden konteynere aktarılıyor. Döndürmeden silmek yayını durdurur. Sıra: **iptal → şifre → sil → yeniden üret.**
 4. Gerekiyorsa yeniden üretin: `python scripts/refresh_tiktok_session.py --upload`
+
+### 2.1c Bu adımlar betikle yapılabilir mi? (denendi — 2026-11-02)
+
+Kısa cevap: **hayır, üçü de.** Üçü de tek tek denendi, sonuç aşağıda. Bu bölüm
+"acaba otomatikleştirebilir miyiz" sorusunun her turda yeniden sorulmasını
+önlemek için var.
+
+| Adım | Panel | Otomatik? | Neden yapılamadı (ölçüm) |
+| --- | --- | --- | --- |
+| Telegram token iptali | BotFather → `/revoke` | ❌ | `.env`'de `api_id`, `api_hash`, `phone`, session-string **hiçbiri yok** → kullanıcı oturumu yok. Bot API'de "kendi token'ını iptal et" metodu da yok. |
+| n8n parola değişimi | n8n UI → Settings → Users | ❌ | n8n yalnızca `localhost:5678`'de tanımlı ve **Docker motoru bu makinede çalışmıyor** — servis ayakta değil, parolanın değiştirileceği arayüz yok. |
+| TikTok oturum iptali | **Mobil uygulama** → Settings → Security | ❌ | Oturum bu makinede **geçerli** (2.1b'de canlı olarak doğrulandı) ama web `/setting` sayfasında `log out` / `device` / `password` / `security` / `2fa` kelimelerinin **hiçbiri yok** — bölüm masaüstü web'de mevcut değil. |
+
+TikTok web ayarlarının tam envanteri (headless Chromium, geçerli oturumla
+açıldı): `Manage account`, `Privacy`, `Push notifications`, `Business
+verification`, `Ads`, `Screen time`, `Content preferences`, `Family Pairing`,
+`Accessibility`. **Güvenlik/oturum sekmesi yok.**
+
+> Yani `scripts/verify_leak_rotation.py` yalnızca **ölçer**, döndürme yapmaz. O
+> yüzden betik her çalıştığında açık kalan kalemler için panel adını ve
+> "otomatik: HAYIR" hükmünü de yazdırır.
+
 
 
 ### 2.3 Google / YouTube

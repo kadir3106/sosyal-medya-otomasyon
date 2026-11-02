@@ -209,8 +209,28 @@ def check_tiktok() -> list[str]:
         if name in important:
             lines.append("  %-16s %-12s bitiş=%s" % (host, name, as_date(expires)))
     lines.append("SONUC          : çerezler silinene/döndürülene kadar geçerli kalır "
-                 "-> TikTok'ta *log out of all devices*")
+                 "-> TikTok'ta *log out of all devices* (mobil uygulama)")
+    lines.append("                 NOT: web ayarlarında oturum/şifre bölümü YOK — "
+                 "tarayıcıyla yapılamaz (ölçüldü 2026-11-02)")
     return lines
+
+
+#: Hangi adımın otomatikleştirilebildiği — tahmin değil, denendi ve ölçüldü
+#: (2026-11-02). `verify_leak_rotation.py` bunu her çalıştırmada hatırlatır ki
+#: bir sonraki turda "betikle yapılır mı" sorusu yeniden sorulmasın.
+CAPABILITIES: list[tuple[str, str, str, str]] = [
+    ("telegram", "BotFather → /revoke", "HAYIR",
+     "Telegram kullanıcı oturumu yok: .env'de api_id/api_hash/phone/"
+     "session-string hiçbiri bulunmuyor, bot API kendi token'ını iptal edemez"),
+    ("n8n-parola", "n8n UI → Settings → Users", "HAYIR",
+     "n8n yalnızca localhost:5678'de tanımlı ve Docker motoru bu makinede "
+     "çalışmıyor — servis ayakta değil, parola değiştirilecek arayüz yok"),
+    ("tiktok", "Mobil uygulama → Settings → Security", "HAYIR",
+     "Oturum bu makinede GEÇERLİ (ölçüldü: giriş duvarı yok, sessionid "
+     "2027-03-16) ama web /setting sayfasında log out/device/password/"
+     "security bölümü hiç yok — panel mobil uygulamada"),
+]
+
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -267,9 +287,17 @@ def main(argv: list[str] | None = None) -> int:
     if failures:
         print("DÖNDÜRME TAMAM DEĞİL. Açık kalan: %s" % ", ".join(failures))
         print("Adımlar: docs/SIZINTI_TEMIZLIGI.md → Bölüm 2")
+        print("\nBu adımlar BETİKLE YAPILAMAZ (denendi, ölçüldü 2026-11-02):")
+        for name, panel, auto, why in CAPABILITIES:
+            if name.split("-")[0] in " ".join(failures) or name in failures:
+                print("  %-11s %-38s otomatik: %s" % (name, panel, auto))
+                print("              %s" % why)
+        print("\nBetik yalnızca ÖLÇER; döndürme panel işidir. "
+              "Her adımdan sonra tekrar çalıştırın.")
         return 1
     print("Tüm sızan sırlar etkisiz. ✅")
     return 0
+
 
 
 if __name__ == "__main__":

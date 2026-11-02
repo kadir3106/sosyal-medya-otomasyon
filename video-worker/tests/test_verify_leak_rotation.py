@@ -220,3 +220,58 @@ def test_main_returns_2_when_archive_missing(monkeypatch):
     monkeypatch.setattr(mod, "read_env", lambda: {})
     monkeypatch.setattr(mod, "load_n8n_store", boom)
     assert mod.main([]) == 2
+
+
+def test_failure_output_names_panel_and_says_not_automatable(monkeypatch, capsys):
+    """Açık kalem varken çıktı, paneli ve "otomatik: HAYIR" hükmünü göstermeli.
+
+    Neden: bir sonraki turda "bunu betikle yapabilir miyiz" sorusu yeniden
+    sorulmasın. Hüküm ölçülmüş (Bölüm 2.1c), tahmin değil.
+    """
+    import verify_leak_rotation as mod
+
+    monkeypatch.setattr(mod, "read_env", lambda: {})
+    monkeypatch.setattr(mod, "load_n8n_store", lambda: ("k" * 32, [], {}))
+    monkeypatch.setattr(mod, "check_telegram",
+                        lambda *a: ["SIZAN : HTTP 200  >>> HALA GECERLI <<<"])
+    monkeypatch.setattr(mod, "check_n8n_password", lambda *a: ["SONUC : HALA AYNI"])
+    monkeypatch.setattr(mod, "check_tiktok", lambda: ["profil : HALA DISKTE"])
+
+    assert mod.main([]) == 1
+    out = capsys.readouterr().out
+    assert "BETİKLE YAPILAMAZ" in out
+    for panel in ("BotFather", "n8n UI", "Mobil uygulama"):
+        assert panel in out
+    assert out.count("otomatik: HAYIR") == 3
+
+
+def test_capabilities_cover_every_failure_key():
+    """Her olası açık kalem için bir yetenek satırı olmalı (sessiz boşluk olmasın)."""
+    import verify_leak_rotation as mod
+
+    names = {row[0] for row in mod.CAPABILITIES}
+    assert names == {"telegram", "n8n-parola", "tiktok"}
+    for name, panel, auto, why in mod.CAPABILITIES:
+        assert panel and auto == "HAYIR" and len(why) > 20
+
+
+def test_tiktok_verdict_says_web_cannot_revoke(tmp_path, monkeypatch):
+    """TikTok hükmü, iptalin web'de olmadığını yazmalı — yanlış yönlendirme olmasın."""
+    import sqlite3
+
+    import verify_leak_rotation as mod
+
+    profile = tmp_path / "tiktok_session"
+    net = profile / "Default" / "Network"
+    net.mkdir(parents=True)
+    con = sqlite3.connect(str(net / "Cookies"))
+    con.execute(
+        "CREATE TABLE cookies (host_key TEXT, name TEXT, expires_utc INTEGER)")
+    con.execute("INSERT INTO cookies VALUES ('.tiktok.com','sessionid',13350000000000000)")
+    con.commit()
+    con.close()
+
+    monkeypatch.setattr(mod, "TIKTOK_PROFILE", profile)
+    lines = mod.check_tiktok()
+    assert any("HALA DISKTE" in line for line in lines)
+    assert any("web ayarlarında" in line and "YOK" in line for line in lines)
