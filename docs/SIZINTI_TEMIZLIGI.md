@@ -18,7 +18,7 @@
 
 `.env` **hiç commit edilmedi** (`.gitignore:2`). Yerel diskte 9 dolu anahtar var.
 
-**Sonuç:** Bu tek arşiv, n8n üzerinden yönetilen **her** kimlik bilgisini açığa çıkarmış sayılmalıdır.
+**Sonuç:** Arşiv **çözülebilir** durumda ve içindeki tek credential **hâlâ geçerli**. Ama kapsam sanıldığından dar: n8n deposunda **1** credential, **0** workflow, **0** variable var (Bölüm 2.1'deki 130 tabloluk tarama). Yani "n8n üzerinden yönetilen her şey sızdı" **doğru değil** — Google/Meta/X/OpenRouter anahtarları `.env`'de yaşıyor, bu arşivde değil. Sızan üç şey: bot token'ı, n8n sahip parolası, TikTok oturumu.
 
 ## 2. Döndürme listesi (sırayla)
 
@@ -43,20 +43,54 @@ Her satır: ne yapılacak → nereden → doğrulama. Değerleri bu dosyaya **ya
 
 > ⚠️ `database.sqlite` tek başına açılırsa **0** credential görünür — n8n `journal_mode=wal` ile çalışıyor ve asıl veri `database.sqlite-wal` içinde. Yanlış dosyayı okumak "sızıntı yok" gibi görünür.
 
-**Şifreleme gerçekten çözüldü (iddia değil, test):** `data` alanı base64 → `Salted__` (OpenSSL başlığı) + salt + AES-256-CBC gövdesi. `encryptionKey` doğrudan parola olarak `EVP_BytesToKey`'e verildiğinde `{"accessToken": ...}` JSON'u çıktı. Yani anahtar + veritabanı = **düz metin**.
+**Şifreleme gerçekten çözüldü — üçüncü ölçüm, ilk tutan.** n8n'in kendi `CipherAes256CBC` uygulaması (`packages/core/src/encryption/aes-256-cbc.ts`) birebir uygulandı:
+
+```
+format   : base64( "Salted__" || salt(8 bayt) || AES-256-CBC(gövde) )
+anahtar  : password = encryptionKey || salt          # 'binary' kodlama
+           h1 = md5(password);  h2 = md5(h1 || password)
+           iv = md5(h2 || password);  derivedKey = h1 || h2   # 32 bayt
+```
+
+Sonuç: `{"accessToken": "<46 karakter>"}` — **JSON çıktı, ilk denemede.**
+
+> İki önceki ölçüm yanlıştı ve ikisi de aynı hatayı yapıyordu: base64 gövdesinin **ilk 16 baytını IV** sanıp kalanını şifreli metin sayıyorlardı. n8n formatında 8–16 arası **salt**tır, şifreli metin 16'dan başlar. Tuzu `getKeyAndIv`'ye vermek yerine IV olarak kullanmak, hangi anahtar türetmesi denenirse denensin (26 kombinasyon, md5/kırpılmış hash/16-32 bayt önek/ECB-CBC-CFB-OFB-CTR-GCM) yalnızca %30-46 yazdırılabilir çöp üretir. "Çözülemedi" sonucu **algoritmanın değil, benim ayrıştırmamın** hatasıydı.
+
+**Sızan değerler hâlâ geçerli (ölçüldü, 2026-11-02):**
+
+| Sır | Kanıt | Durum |
+| --- | --- | --- |
+| Telegram bot token (`accessToken`, 46 kar.) | `getMe` → **HTTP 200** (bot yanıt veriyor) | ❗ **geçerli** |
+| n8n sahip hesabı `admin@local.dev` | `user.password` bcrypt (`$2a$10$…`, 60 kar.) — `.env`'deki **mevcut** `N8N_PASSWORD` ile `checkpw` = **True** | ❗ **geçerli** |
+| TikTok `sessionid` / `sid_guard` | 27 `.tiktok.com` çerezi, 20 `HttpOnly`; `sessionid` → **2027-03-16**, `sid_guard` → **2027-09-12** | ❗ **geçerli** |
+
+**Kapsam tam tarandı (130 tablo):** tüm metin kolonlarında `Salted__` blobu arandı → yalnızca **1** tane var, `credentials_entity.data`. `deployment_key` (4 satır), `execution_data`, `workflow_entity`, `variables`, `user_api_keys`, `oauth_*`, `secrets_provider_*` → hepsi temiz. Yani Google/Meta/X/OpenRouter token'ları bu arşivde **yok**; `.env`'dekiler bu sızıntıdan bağımsız.
 
 1. n8n'i durdurun: `docker compose stop n8n`
 2. BotFather → botunuz → **API Token → Revoke current token** → yeni token
 3. Yeni token'ı `.env`'e yazın
-4. n8n'i **temiz bir volume** ile yeniden kurun: `docker compose down -v n8n` (⚠️ volume silinir)
+4. **n8n sahip parolasını da değiştirin** — bcrypt hash'i sızdı ve mevcut parolayla eşleşiyor. Parola değişene kadar aynı arşiv n8n'e giriş demektir.
+5. n8n'i **temiz bir volume** ile yeniden kurun: `docker compose down -v n8n` (⚠️ volume silinir)
 
 > n8n'de yeniden girilecek **başka credential yok** (tablo 0). Ama eski `encryptionKey` + veritabanı `backups/` klasöründe **hâlâ diskte** — bunları da silin, yoksa aynı sır okunabilir kalır.
 
-### 2.1b TikTok tarayıcı oturumu (ölçülmüş: 1096 dosya)
+### 2.1b TikTok tarayıcı oturumu (ölçülmüş: 1015 dosya, 27 çerez)
 
-`video-output/tiktok_session/` **git'ten çıktı ama diskte duruyor** (`1096` dosya). İçinde `Default/Network/Cookies` ve `Default/Login Data` var.
+`video-output/tiktok_session/` **git'ten çıktı ama diskte duruyor** — 148.3 MB, 1015 dosya. İçinde `Default/Network/Cookies`, `Login Data` (41 KB), `Local State` (4.8 KB), `Web Data` (170 KB).
 
-1. TikTok → Settings → Security → **Log out of all devices**
+**Çerez ölçümü (değerler okunmadı, yalnızca meta veri):**
+
+| Kalem | Değer |
+| --- | --- |
+| Toplam çerez / TikTok | 28 / **27** (hepsi `.tiktok.com`) |
+| Kalıcı / oturum çerezi | 27 / 0 — tarayıcı kapansa da geçerli |
+| `HttpOnly` / `Secure` | 20 / 18 |
+| `sessionid`, `sessionid_ss`, `sid_tt`, `uid_tt`, `uid_tt_ss` | bitiş **2027-03-16 17:43** |
+| `sid_guard` | bitiş **2027-09-12 17:43** |
+
+> Yani oturum "eski" değil: bugünden **~4.5 ay** daha geçerli bir `sessionid` var. Çerezler Chromium'un DPAPI/AES-GCM korumasıyla şifreli ama `Local State` de aynı profilde olduğu için aynı makinede **birlikte** açılabilir — arşivin n8n için geçerli olan mantığı burada da geçerli.
+
+1. TikTok → Settings → Security → **Log out of all devices** (yalnızca şifre değiştirmek yetmez; `sid_guard` sunucu tarafında iptal edilmeli)
 2. Şifreyi de değiştirin
 3. Yerel profili silin: `Remove-Item video-output/tiktok_session -Recurse -Force`
 4. Gerekiyorsa yeniden üretin: `python scripts/refresh_tiktok_session.py`
@@ -64,7 +98,7 @@ Her satır: ne yapılacak → nereden → doğrulama. Değerleri bu dosyaya **ya
 
 ### 2.3 Google / YouTube
 
-`YOUTUBE_REFRESH_TOKEN` yapılandırılmış (`.env`). n8n credential'ları arasında da bulunmuş olabilir.
+`YOUTUBE_REFRESH_TOKEN` yapılandırılmış (`.env`). **Ölçüm: bu arşivde Google/YouTube token'ı yok** — 130 tabloda tek bir şifreli blob bile YouTube'a ait değil (tek blob `telegramApi`). Yani aşağıdaki adımlar bu sızıntı için **zorunlu değil**; yalnızca genel hijyen olarak duruyor.
 
 1. https://myaccount.google.com/permissions → projeye erişimi **kaldır**
 2. Google Cloud Console → APIs & Services → Credentials → OAuth client → **reset secret**

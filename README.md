@@ -53,7 +53,19 @@ Adımlar ve kanıt: [`docs/SIZINTI_TEMIZLIGI.md`](docs/SIZINTI_TEMIZLIGI.md) —
 
 `main` previously tracked a Playwright TikTok browser profile under `video-output/tiktok_session/` (1015 files across 2 commits). Those paths are now gitignored, untracked, **and removed from history on every branch** — but **the TikTok session/cookies that lived there are still valid credentials** until you revoke them (log out all sessions) and re-run `scripts/refresh_tiktok_session.py`.
 
-Measured scope of the leak (2026-11-02): the tarball's contents were extracted and opened, not guessed. **`video-output/tiktok_session/`** (1015 files, 2 commits) and **`backups/otomasyon-yedek-2026-09-05.tar.gz`**, which contained a nested `n8n-data.tar` → `database.sqlite` + `database.sqlite-wal` + `config` with the **n8n `encryptionKey` (32 chars)**. That store held exactly **one** credential — `Telegram - Otomasyon Bot` (`telegramApi`), with **0** workflows and **0** variables. The key was not merely "probably decryptable": it was used to decrypt the stored value, yielding `{"accessToken": …}` in plaintext. A third item, **`.tiktok_pkce.json`** (a PKCE `code_verifier`), and 13 `video-output/tiktok_*.png` screenshots were also in history and were removed in the same pass. `.env` itself was never committed (covered by `.gitignore:2`). History rewrite is **done**; rotation is **not**.
+Measured scope of the leak (2026-11-02): the tarball's contents were extracted and opened, not guessed. **`video-output/tiktok_session/`** (1015 files, 2 commits) and **`backups/otomasyon-yedek-2026-09-05.tar.gz`**, which contained a nested `n8n-data.tar` → `database.sqlite` + `database.sqlite-wal` + `config` with the **n8n `encryptionKey` (32 chars)**. A third item, **`.tiktok_pkce.json`** (a PKCE `code_verifier`), and 13 `video-output/tiktok_*.png` screenshots were also in history and were removed in the same pass. `.env` itself was never committed (covered by `.gitignore:2`). History rewrite is **done**; rotation is **not**.
+
+**The archive is decryptable, and the secrets in it are live.** Both the ciphertext and the key were in the same tarball, so there is no "probably" left: applying n8n's own `CipherAes256CBC` (`Salted__` + 8-byte salt, `EVP_BytesToKey` with MD5, AES-256-CBC) to the stored value yields valid JSON. Three distinct secrets are exposed, all measured:
+
+| What | Evidence | Still valid? |
+| --- | --- | --- |
+| Telegram bot token (`Telegram - Otomasyon Bot`, `telegramApi`) | decrypts to `{"accessToken": …}` (46 chars) | **Yes** — `getMe` returns HTTP 200, the bot answers |
+| n8n owner login `admin@local.dev` | `user.password` is bcrypt and **matches the current `N8N_PASSWORD`** in `.env` | **Yes** — unchanged password still opens the instance |
+| TikTok session (`sessionid`, `sid_guard`, …) | 27 `.tiktok.com` cookies, 20 `HttpOnly` | **Yes** — `sessionid` until 2027-03-16, `sid_guard` until 2027-09-12 |
+
+Blast radius is bounded but real: the store holds **exactly one** credential, **0** workflows and **0** variables — an exhaustive scan of all **130** tables found exactly **one** `Salted__` blob, in `credentials_entity.data`. There is no Google, Meta, X or OpenRouter token in there; those in `.env` are unrelated to this archive.
+
+> **Correction (2026-11-02):** two earlier revisions of this file were wrong in opposite directions. The first claimed decryption without showing it; the second retracted that as unreproducible. The retraction was itself the error — it derived keys with sha256/`EVP_BytesToKey` variants but treated the first 16 bytes as an IV, when n8n's format puts the 8-byte salt at bytes 8–16 and the ciphertext at 16+. Feeding the salt to `getKeyAndIv` reproduces the plaintext on the first try. The lesson is in the retraction, not the original claim: **an unverified "could not reproduce" is as misleading as an unverified "decrypted".**
 
 > Reading `database.sqlite` alone shows **0** credentials — n8n runs `journal_mode=wal` and the row lives in `database.sqlite-wal`. The first measurement of this leak made exactly that mistake.
 
