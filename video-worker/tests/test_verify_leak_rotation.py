@@ -367,6 +367,84 @@ def test_tiktok_verdict_says_web_cannot_revoke(tmp_path, monkeypatch):
     con.execute(
         "CREATE TABLE cookies (host_key TEXT, name TEXT, expires_utc INTEGER)")
     con.execute("INSERT INTO cookies VALUES ('.tiktok.com','sessionid',13350000000000000)")
+def test_discover_finds_archive_under_any_name(tmp_path, monkeypatch):
+    """Sabit liste yetmez: kullanıcı yedeği başka adla kopyalamış olabilir.
+
+    Ölçüm (2026-11-02): doğrulayıcı yalnız iki bilinen yolu biliyordu; `yedek-2.
+    bundle` diskte dursa "temiz" derdi.
+    """
+    import verify_leak_rotation as mod
+
+    (tmp_path / "yedek-2.bundle").write_bytes(b"x")
+    (tmp_path / "eski-yedek.tar.gz").write_bytes(b"x")
+    (tmp_path / "ilgisiz.txt").write_bytes(b"x")
+    monkeypatch.setattr(mod, "STRAY_SCAN_ROOTS", [tmp_path])
+
+    names = {p.name for p, _ in mod.discover_stray_copies()}
+
+    assert names == {"yedek-2.bundle", "eski-yedek.tar.gz"}
+
+
+def test_discover_skips_venv_noise(tmp_path, monkeypatch):
+    """Sonek taraması tek başına yanlış pozitif üretir — venv atlanmalı.
+
+    Ölçüm (2026-11-02): `C:\\Projects` altında venv içinde `dateutil-
+    zoneinfo.tar.gz` var ve bu bir sır taşımıyor.
+    """
+    import verify_leak_rotation as mod
+
+    venv = tmp_path / "venv" / "Lib" / "site-packages" / "dateutil"
+    venv.mkdir(parents=True)
+    (venv / "zoneinfo.tar.gz").write_bytes(b"x")
+    (tmp_path / "gercek-yedek.bundle").write_bytes(b"x")
+    monkeypatch.setattr(mod, "STRAY_SCAN_ROOTS", [tmp_path])
+
+    found = mod.discover_stray_copies()
+
+    assert [p.name for p, _ in found] == ["gercek-yedek.bundle"]
+
+
+def test_discover_marks_sealed_separately(tmp_path, monkeypatch):
+    """`.sealed` ayrı işaretlenmeli — yoksa mühürlü dosya 'açık' sayılırdı."""
+    import verify_leak_rotation as mod
+
+    (tmp_path / "yedek.bundle.sealed").write_bytes(b"x")
+    monkeypatch.setattr(mod, "STRAY_SCAN_ROOTS", [tmp_path])
+
+    found = mod.discover_stray_copies()
+
+    assert found == [(tmp_path / "yedek.bundle.sealed", True)]
+
+
+def test_discover_respects_depth_limit(tmp_path, monkeypatch):
+    """Derinlik sınırı olmadan `C:\\` taraması dakikalarca sürer."""
+    import verify_leak_rotation as mod
+
+    deep = tmp_path / "a" / "b" / "c" / "d" / "e"
+    deep.mkdir(parents=True)
+    (deep / "derin.bundle").write_bytes(b"x")
+    (tmp_path / "sig.bundle").write_bytes(b"x")
+    monkeypatch.setattr(mod, "STRAY_SCAN_ROOTS", [tmp_path])
+    monkeypatch.setattr(mod, "STRAY_MAX_DEPTH", 2)
+
+    found = [p.name for p, _ in mod.discover_stray_copies()]
+
+    assert found == ["sig.bundle"]
+
+
+def test_tiktok_verdict_says_web_cannot_revoke(tmp_path, monkeypatch):
+    """TikTok hükmü, iptalin web'de olmadığını yazmalı — yanlış yönlendirme olmasın."""
+    import sqlite3
+
+    import verify_leak_rotation as mod
+
+    profile = tmp_path / "tiktok_session"
+    net = profile / "Default" / "Network"
+    net.mkdir(parents=True)
+    con = sqlite3.connect(str(net / "Cookies"))
+    con.execute(
+        "CREATE TABLE cookies (host_key TEXT, name TEXT, expires_utc INTEGER)")
+    con.execute("INSERT INTO cookies VALUES ('.tiktok.com','sessionid',13350000000000000)")
     con.commit()
     con.close()
 
@@ -374,3 +452,21 @@ def test_tiktok_verdict_says_web_cannot_revoke(tmp_path, monkeypatch):
     lines = mod.check_tiktok()
     assert any("HALA DISKTE" in line for line in lines)
     assert any("web ayarlarında" in line and "YOK" in line for line in lines)
+
+
+def test_live_state_dir_is_reported_not_deleted(tmp_path, monkeypatch):
+    """Canlı oturum dizini görünmeli ama 'sil' denmemeli — prodüksiyon kullanıyor."""
+    import verify_leak_rotation as mod
+
+    live = tmp_path / "tiktok_session"
+    (live / "Default").mkdir(parents=True)
+    (live / "Default" / "Cookies").write_bytes(b"x" * 100)
+    monkeypatch.setattr(mod, "LEAK_COPIES", [])
+    monkeypatch.setattr(mod, "STRAY_SCAN_ROOTS", [])
+    monkeypatch.setattr(mod, "LIVE_STATE_DIRS", [live])
+
+    text = "\n".join(mod.check_stray_copies())
+
+    assert "CANLI OTURUM" in text
+    assert "SİLMEYİN" in text
+

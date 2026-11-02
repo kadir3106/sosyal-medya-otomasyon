@@ -442,6 +442,8 @@ Mühürleme AES-256-GCM + scrypt(n=2¹⁴). Betik **silmeden önce geri açıp b
 | JSON alan sırları (`"encryptionKey":"..."`) yakalanıyor | ✅ madde 31 |
 | Disk üzerindeki yedek kopyaları ölçülüyor (`.gitignore` dışı) | ✅ madde 31 |
 | Yedek kopyalar **mühürlenebiliyor** (AES-256-GCM, geri dönüşlü) | ✅ madde 32 |
+| Adı farklı yedekler de taranıyor (venv/node_modules hariç) | ✅ madde 32 |
+| Canlı oturum dizini raporlanıyor, silinmiyor | ✅ madde 32 |
 | CI'da `history-scan` işi (`fetch-depth: 0`) | ✅ |
 | Baseline: yeni sızıntıyı yakalar, bilineni susturur | ✅ |
 
@@ -530,8 +532,40 @@ ama `.sealed` **ve** düz kopya birlikte duruyorsa uyarır — çünkü
 Bu, silmeye göre bir kazanç değil; ama parolayı parola yöneticisinde tutmak
 koşuluyla geri dönüş korunur.
 
-**Kalan risk:** arşiv taraması artık özyinelemeli, ama derinlik 3 ile sınırlı.
+### 5.4 Bilinmeyen kopyalar ve canlı oturum
+
+Sabit yol listesi yetmiyordu: doğrulayıcı yalnız iki bilinen dosyayı sayıyordu,
+yani kullanıcı yedeği `yedek-2.bundle` diye kopyalasa "temiz" derdi. Bu yüzden
+ikinci bir katman var — `discover_stray_copies()` verilen köklerin altında **adı
+ne olursa olsun** `.bundle` / `.tar.gz` / `.tgz` / `.tar.xz` arıyor.
+
+Ölçüm (2026-11-02): `C:\Projects` altında venv içinde `dateutil-zoneinfo.tar.gz`
+bulundu. Yani sonek taraması tek başına **yanlış pozitif** üretir. Bu yüzden
+`venv`, `.venv`, `site-packages`, `node_modules`, `__pycache__`, `.git`,
+`dist`, `build` atlanıyor ve derinlik 4 ile sınırlı.
+
+> **Kendi ölçüm hatam:** "gitignore kapsıyor mu" sorusunu
+> `if (git check-ignore -q ...)` ile sordum ve "HAYIR" aldım. Yanlıştı — `-q`
+> çıktı üretmiyor, PowerShell `if` ise **çıktıya** bakıyor, çıkış koduna değil.
+> Çıkış kodunu kullanınca doğru sonuç: `video-output/tiktok_session` ✅
+> yok sayılıyor. Betiklerde okuma yaparken `$LASTEXITCODE` kullanın.
+
+**Canlı oturum dizini** (`video-output/tiktok_session`, 1015 dosya / 148 MB)
+ayrı raporlanıyor ve **silinmiyor**: prodüksiyon onu kullanıyor ve
+`--tiktok` ölçümü oturumun canlı olduğunu doğruladı. Mühürlemek de yanlış olur —
+çalışan oturumu bozar. Döndürme (mobil uygulamada *log out of all devices*)
+tamamlandıktan **sonra** silinebilir.
+
+| Kalem | Durum |
+| --- | --- |
+| Bilinen 2 yedek (bundle + tarball) | ❌ açık — mühürlenmeli |
+| Adı farklı arşivler | ✅ taramayla bulunuyor (venv hariç) |
+| `tiktok_session` (canlı) | ⚠️ görünür, silinmez, döndürme sonrası silinir |
+
+**Kalan risk:** arşiv taraması özyinelemeli, ama derinlik 3 ile sınırlı.
 Daha derin bir yedek `nested_archive_unopened` bulgusu üretir — yani sessiz
 kalmaz, ama **elle açılması** gerekir.
+
+
 
 

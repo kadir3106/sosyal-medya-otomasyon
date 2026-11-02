@@ -26,6 +26,7 @@ import base64
 import hashlib
 import io
 import json
+import os
 import re
 import sqlite3
 import sys
@@ -216,8 +217,8 @@ def check_tiktok() -> list[str]:
 
 
 #: Sızıntılı nesneleri taşıyan dosya kopyaları — repo DIŞINDA olsalar bile.
-#: Neden ayrı kontrol: `.gitignore` bu ikisini de yok sayıyor (`*.tar.gz`,
-#: `*.bundle`), yani `secret_scan --history` de HEAD taraması da onları hiç
+#: Neden ayrı kontrol: `.gitignore` bunları yok sayıyor (`*.tar.gz`, `*.bundle`,
+#: `*.sealed`), yani `secret_scan --history` de HEAD taraması da onları hiç
 #: görmez. Ölçüm (2026-11-02): diskteki 130.7 MB'lık bundle'da
 #: `video-output/tiktok_session/` altında **941 nesne** duruyor ve içindeki
 #: `sessionid` çerezi 2027-03-16'ya kadar geçerli. Bu yüzden döndürme
@@ -228,6 +229,64 @@ LEAK_COPIES: list[tuple[Path, str]] = [
      "git bundle — tüm geçmiş (tiktok_session profili + n8n encryptionKey)"),
     (TARBALL, "n8n yedeği — database.sqlite + encryptionKey"),
 ]
+
+#: Canlı oturum dizinleri: `.gitignore`'da ama **diskte**. Bilerek sürüyorlar
+#: (prodüksiyon onları kullanıyor) — bu yüzden "sil" değil "farkında ol"
+#: kalemi. Mühürlenemezler: mühürlemek çalışan oturumu bozar.
+LIVE_STATE_DIRS: list[Path] = [
+    ROOT / "video-output" / "tiktok_session",
+]
+
+#: Verilen köklerin altında adı ne olursa olsun aranan sır taşıyıcıları.
+#: Sabit `LEAK_COPIES` listesinin yetmediği yer: kullanıcı yedeği başka adla
+#: kopyalamış olabilir (`yedek-2.bundle`, `eski-yedek.tar.gz`). Ölçüm
+#: (2026-11-02): `C:\Projects` altında adı farklı bir tarball (`dateutil-
+#: zoneinfo.tar.gz`, bir venv dosyası) de bulundu — yani "adı belli" varsayımı
+#: yanlış pozitif de üretir, kaçırma da. Bu yüzden tarama yapılıyor ama venv /
+#: site-packages / node_modules atlanıyor.
+STRAY_SCAN_ROOTS: list[Path] = [ROOT.parent]
+STRAY_SCAN_SUFFIXES = (".bundle", ".tar.gz", ".tgz", ".tar.bz2", ".tar.xz")
+STRAY_SKIP_PARTS = (
+    "venv", ".venv", "site-packages", "node_modules", "__pycache__",
+    ".git", ".pytest_cache", "dist", "build",
+)
+STRAY_MAX_DEPTH = 4
+
+
+
+def discover_stray_copies() -> list[tuple[Path, bool]]:
+    """Diskte adı ne olursa olsun sır taşıyıcı dosyaları bulur: (yol, mühürlü_mü).
+
+    Neden sabit liste yetmiyor: `LEAK_COPIES` iki bilinen yolu sayıyor. Kullanıcı
+    yedeği başka adla kopyalamışsa (`yedek-2.bundle`) doğrulayıcı "temiz" derdi.
+    Ölçüm (2026-11-02): `C:\\Projects` altında venv içinde `dateutil-
+    zoneinfo.tar.gz` var — yani sonek taraması tek başına yanlış pozitif üretir.
+    Bu yüzden venv/site-packages/node_modules atlanıyor.
+
+    Döndürülen bayrak, dosyanın **mühürlü** olup olmadığını söyler; mühürlü
+    dosya aynı ada `+ ".sealed"` ile değil, kendi adı `.sealed` ile biter.
+    """
+    found: list[tuple[Path, bool]] = []
+    for root in STRAY_SCAN_ROOTS:
+        if not root.is_dir():
+            continue
+        base_depth = len(root.parts)
+        for dirpath, dirnames, filenames in os.walk(root, onerror=lambda _e: None):
+            current = Path(dirpath)
+            depth = len(current.parts) - base_depth
+            # Derinlik sınırı: sınıra gelince alt dizinlere inme.
+            if depth >= STRAY_MAX_DEPTH:
+                dirnames[:] = []
+            # Gürültü kaynaklarını buda (venv, node_modules, .git...).
+            dirnames[:] = [d for d in dirnames if d not in STRAY_SKIP_PARTS]
+            for name in filenames:
+                lowered = name.lower()
+                sealed = lowered.endswith(".sealed")
+                probe = lowered[: -len(".sealed")] if sealed else lowered
+                if not probe.endswith(STRAY_SCAN_SUFFIXES):
+                    continue
+                found.append((current / name, sealed))
+    return sorted(found)
 
 
 def check_stray_copies() -> list[str]:
@@ -240,6 +299,10 @@ def check_stray_copies() -> list[str]:
 
     Mühürlü ama kaynağı hâlâ duran dosya uyarı verir: mühürlemek tek başına
     yetmez, düz kopya silinmedikçe sır okunabilir kalır.
+
+    İki katman: `LEAK_COPIES` bilinen yolları anlamlarıyla raporlar,
+    `discover_stray_copies()` adı ne olursa olsun diskte kalanları bulur.
+    Yalnız birincisi yetseydi `yedek-2.bundle` gibi bir kopya görünmezdi.
     """
     lines: list[str] = []
     found = False
@@ -269,6 +332,49 @@ def check_stray_copies() -> list[str]:
                      "--generate-key \\")
         lines.append("                      --path \"<yol>\" --seal --delete-originals")
         lines.append("                Ayrıntı: docs/SIZINTI_TEMIZLIGI.md §5")
+
+    # İkinci katman: adı ne olursa olsun diskteki arşivler.
+    known = {p.resolve() for p, _ in LEAK_COPIES}
+    extras = [(p, s) for p, s in discover_stray_copies()
+              if p.resolve() not in known
+              and p.with_name(p.name + ".sealed").resolve() not in known
+              and not any(p.resolve() == k.with_name(k.name + ".sealed") for k in known)]
+    unsealed_extras = [p for p, sealed in extras if not sealed]
+    if unsealed_extras:
+        lines.append("")
+        lines.append("BILINMEYEN KOPYALAR (%d) — adı farklı olduğu için "
+                     "bilinen listede yok:" % len(unsealed_extras))
+        for path in unsealed_extras[:10]:
+            size_mb = path.stat().st_size / 1e6
+            lines.append("  %s (%.1f MB)" % (path, size_mb))
+        if len(unsealed_extras) > 10:
+            lines.append("  ... ve %d tane daha" % (len(unsealed_extras) - 10))
+        lines.append("  Bu dosyalar da mühürlenmeli veya silinmeli.")
+    sealed_extras = [p for p, sealed in extras if sealed]
+    if sealed_extras:
+        lines.append("bilinmeyen mühürlü kopya: %d adet — ✅ sır okunamaz"
+                     % len(sealed_extras))
+
+    # Canlı oturum dizinleri: silinmez (prodüksiyon kullanıyor), ama görünmeli.
+    for live in LIVE_STATE_DIRS:
+        if not live.is_dir():
+            continue
+        total = 0
+        count = 0
+        for dirpath, _dirnames, filenames in os.walk(live, onerror=lambda _e: None):
+            for name in filenames:
+                try:
+                    total += (Path(dirpath) / name).stat().st_size
+                    count += 1
+                except OSError:
+                    continue
+        lines.append("")
+        lines.append("CANLI OTURUM  : %s (%d dosya, %.1f MB)"
+                     % (live, count, total / 1e6))
+        lines.append("                .gitignore'da ✅ ama diskte. Döndürme "
+                     "tamamlanınca silinebilir.")
+        lines.append("                SİLMEYİN: prodüksiyon bu profili kullanıyor "
+                     "(verify_leak_rotation --tiktok canlı olduğunu ölçtü).")
     return lines
 
 
