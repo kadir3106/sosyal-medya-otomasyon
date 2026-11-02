@@ -355,26 +355,19 @@ def check_stray_copies() -> list[str]:
         lines.append("bilinmeyen mühürlü kopya: %d adet — ✅ sır okunamaz"
                      % len(sealed_extras))
 
-    # Canlı oturum dizinleri: silinmez (prodüksiyon kullanıyor), ama görünmeli.
+    # Canlı oturum dizinleri: `check_tiktok()` profili zaten "HALA DISKTE" diye
+    # raporluyor. Buradaki katma değer tek şey: **silinmemesi gerektiğini**
+    # söylemek — çünkü "sızıntı listesinde görünen dizin" refleks olarak "sil"
+    # dedirtir, oysa prodüksiyon o profili kullanıyor.
     for live in LIVE_STATE_DIRS:
         if not live.is_dir():
             continue
-        total = 0
-        count = 0
-        for dirpath, _dirnames, filenames in os.walk(live, onerror=lambda _e: None):
-            for name in filenames:
-                try:
-                    total += (Path(dirpath) / name).stat().st_size
-                    count += 1
-                except OSError:
-                    continue
         lines.append("")
-        lines.append("CANLI OTURUM  : %s (%d dosya, %.1f MB)"
-                     % (live, count, total / 1e6))
-        lines.append("                .gitignore'da ✅ ama diskte. Döndürme "
-                     "tamamlanınca silinebilir.")
-        lines.append("                SİLMEYİN: prodüksiyon bu profili kullanıyor "
-                     "(verify_leak_rotation --tiktok canlı olduğunu ölçtü).")
+        lines.append("CANLI OTURUM  : %s" % live)
+        lines.append("                .gitignore'da ✅ ama diskte. "
+                     "Döndürmeden SONRA silinebilir.")
+        lines.append("                SİLMEYİN: prodüksiyon bu profili kullanıyor; "
+                     "oturum canlı (--tiktok ölçtü).")
     return lines
 
 
