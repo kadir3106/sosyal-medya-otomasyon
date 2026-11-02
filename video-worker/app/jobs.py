@@ -9,12 +9,29 @@ this module is the durable source of truth for job lifecycle.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
+import threading
+import time
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
+
+from app.jsonstore import write_atomic
+
+logger = logging.getLogger(__name__)
+
+# `pending.json` yazma/okuma/silme tek kilitten geçer. video-worker tek süreç
+# olarak çalışıyor, yani kendi okuyucularımızı serileştirmek Windows'taki
+# "hedefte açık tutamak varken os.replace engellenir" (WinError 5) sorununu
+# süreç içinde tamamen kaldırıyor. Ölçüm: kilit olmadan 4 okuyucu + yazıcı
+# altında retry'ın 5 denemesi de PermissionError ile tükendi. Süreç DIŞI
+# tutamaklar (n8n, host araçları) için sınırlı retry hâlâ gerekli; onlar
+# yüzünden yazma başarısız olursa istisna yükselir — sessizce yerinde yazmak
+# yarım dosya riskini geri getirirdi.
+_pending_lock = threading.Lock()
 
 JOB_STATES = (
     "queued",
@@ -311,12 +328,110 @@ def claim_new_job(
 
 
 def write_pending_mirror(media_dir: str | Path, payload: dict[str, Any]) -> None:
-    """Dual-write pending.json so existing Telegram/n8n paths keep working."""
+    """Double-write pending.json so the Telegram/n8n paths keep working.
+
+    `pending.json` is a *public* file: catchup, daily_digest, telegram_bot and the
+    `/pending` and `/media` endpoints all read it. A plain `write_text` opens the
+    file with O_TRUNC, so the file is empty from that instant until the next
+    flush — a concurrent reader sees `{}` or a half payload. Measured on
+    Windows: 392 of 682 reads (57%) during 3000 back-to-back writes raised
+    JSONDecodeError ("Unterminated string", "Expecting value").
+
+    Consequences were not cosmetic: an empty payload makes
+    `read_pending_payload` fall through to the 404 branch of /pending, and
+    telegram_bot treats the empty dict as "no pending job" — so a Telegram press
+    during generation reports nothing to approve while the real approval is
+    silently still armed.
+
+    `write_atomic` writes a sibling temp file and swaps it in with os.replace,
+    so readers see either the old or the new payload, never a torn one. Two
+    Windows caveats come with the rename: os.replace raises PermissionError
+    (WinError 5) while the target is open (*measured* — a plain reader thread is
+    enough), so writers and readers share `_pending_lock`; a foreign handle
+    (n8n, host tool) is outside that lock and is covered by a bounded retry.
+    """
     media = Path(media_dir)
     media.mkdir(parents=True, exist_ok=True)
-    (media / "pending.json").write_text(
-        json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+    with _pending_lock:
+        _replace_with_retry(media / "pending.json", payload)
+
+
+def _replace_with_retry(
+    path: Path, payload: Any, *, attempts: int = 10, initial_delay: float = 0.005
+) -> None:
+    """`write_atomic` with a short retry for handles held outside this process.
+
+    `_pending_lock` serialises our own readers/writers, so the only way this
+    still hits WinError 5 is a foreign handle (n8n, a host tool) opening
+    pending.json. Retry briefly; a genuinely stuck file raises after the last
+    attempt instead of silently falling back to a non-atomic write.
+    """
+    delay = initial_delay
+    for attempt in range(1, attempts + 1):
+        try:
+            write_atomic(path, payload)
+            return
+        except PermissionError:
+            if attempt == attempts:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 2, 0.1)
+
+
+def _quarantine_corrupt(path: Path) -> None:
+    """Move unreadable JSON aside so disk state matches "there is no pending job".
+
+    Anything that can actually be parsed is returned as-is; this runs only when
+    the file cannot be read. Leaving it in place is what produced a permanent
+    500: every /pending, /media and Telegram read re-parsed the same bad bytes,
+    and only a manual delete recovered.
+    """
+    try:
+        data = path.read_bytes()
+    except OSError:
+        logger.warning("pending.json okunamadi (silinemedi de): %s", path)
+        return
+    try:
+        path.with_suffix(path.suffix + ".corrupt").write_bytes(data)
+    except OSError:
+        logger.warning("pending.json karantinaya alinamadi: %s", path)
+        return
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        logger.warning("bozuk pending.json silinemedi: %s", path)
+        return
+    logger.warning(
+        "Bozuk pending.json karantinaya alindi (%s.corrupt, %d bayt); "
+        "onay kaybi olabilir",
+        path,
+        len(data),
     )
+
+
+def _read_json_tolerant(path: Path) -> dict[str, Any] | None:
+    """Read a JSON object; `None` instead of raising when the file is unusable.
+
+    `jsonstore.read_json` is deliberately not reused here: it catches only
+    JSONDecodeError (a torn multi-byte write raises UnicodeDecodeError) and it
+    degrades to a caller-supplied default instead of quarantining, which for
+    pending.json would leave the bad bytes in place and keep the 500 alive.
+
+    Reads take `_pending_lock` so the file is never open while another thread
+    calls os.replace (Windows refuses that rename — measured).
+    """
+    with _pending_lock:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
+            logger.warning(
+                "pending.json kullanilamaz (%s: %s) — karantinaya aliniyor",
+                type(exc).__name__,
+                exc,
+            )
+            _quarantine_corrupt(path)
+            return None
+    return data if isinstance(data, dict) else None
 
 
 def read_pending_payload(media_dir: str | Path) -> dict[str, Any] | None:
@@ -328,13 +443,38 @@ def read_pending_payload(media_dir: str | Path) -> dict[str, Any] | None:
         return payload
     pending_path = Path(media_dir) / "pending.json"
     if pending_path.is_file():
-        return json.loads(pending_path.read_text(encoding="utf-8"))
+        return _read_json_tolerant(pending_path)
     return None
 
 
 def clear_pending_mirror(media_dir: str | Path, job_id: str | None = None) -> None:
+    """Drop the DB row and the pending.json mirror.
+
+    The unlink retries for the same reason `main._unlink_quietly` does: a
+    concurrent /cleanup and /publish (or two /cleanup calls) can reach this line
+    together and the loser gets PermissionError (WinError 5) on Windows, which
+    surfaced as a 500 to that caller. pending.json was left out of that earlier
+    fix because it is not an artifact — same defect, different file.
+    """
     clear_awaiting(media_dir, job_id)
-    Path(media_dir, "pending.json").unlink(missing_ok=True)
+    with _pending_lock:
+        _unlink_with_retry(Path(media_dir, "pending.json"))
+
+
+def _unlink_with_retry(path: Path, *, attempts: int = 10, initial_delay: float = 0.005) -> None:
+    """Delete `path`, tolerating a concurrent delete or an open reader handle."""
+    delay = initial_delay
+    for attempt in range(1, attempts + 1):
+        try:
+            path.unlink(missing_ok=True)
+            return
+        except FileNotFoundError:
+            return
+        except PermissionError:
+            if attempt == attempts:
+                raise
+            time.sleep(delay)
+            delay *= 2
 
 
 def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:

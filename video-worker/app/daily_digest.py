@@ -72,14 +72,17 @@ def build_daily_digest(media_dir: str, now: Optional[datetime] = None) -> str:
 
     pending_path = media / "pending.json"
     if pending_path.is_file():
-        try:
-            pending = json.loads(pending_path.read_text(encoding="utf-8"))
+        # Ayni toleransli okuyucu: bozuk dosya ozeti tamamen dusurmesin.
+        from app.jobs import read_pending_payload
+
+        pending = read_pending_payload(media_dir)
+        if pending:
             p_title = pending.get("title") or pending.get("caption") or "(başlıksız)"
             p_kind = "🖼 görsel" if pending.get("kind") == "image" else "🎬 video"
             lines.append(f"⏳ Onay bekleyen {p_kind}: {p_title}")
             lines.append("Lütfen Telegram'daki onay/red butonuyla karar ver.")
-        except (json.JSONDecodeError, OSError):
-            pass
+        else:
+            lines.append("Bekleyen onay yok.")
     else:
         lines.append("Bekleyen onay yok.")
 

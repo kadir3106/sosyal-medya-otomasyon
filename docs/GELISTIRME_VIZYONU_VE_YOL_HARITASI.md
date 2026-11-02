@@ -866,8 +866,8 @@ Askı sanılan şey aslında **gerçek ağ retry'ı**ydı: `.env` içindeki `DIR
 - Yayın sonucu bilinmeyen işler için durum sorgusu yalnızca **TikTok ve YouTube**'da var; X/LinkedIn/Pinterest/Instagram/Facebook yükleme anında kimlik üretmediği için desteklenmiyor
 - YouTube'da `video_id` ancak yükleme yanıtıyla geliyor: read-timeout daha erken oluşursa kimlik yok (kodda belgelendi)
 - Zombi upload thread'leri için süreç düzeyinde izolasyon (`shutdown(wait=False)` artık beklemiyor; thread'ler süreç bitene kadar yaşayabilir)
-- `jsonstore` kilidi yalnızca **süreç-içi**; birden çok video-worker replikası çalışırsa dosya düzeyinde kilit gerekir
-- `jobs.py` `write_pending_mirror` hâlâ düz `write_text` ile yazıyor (atomik değil); okuma tarafı artık SQLite'ı tercih ettiği için pratikte yarım dosya okunmuyor ama dosya düzeyinde garanti yok
+- `jsonstore` kilidi yalnızca **süreç-içi**; birden çok video-worker replikası çalışırsa dosya düzeyinde kilit gerekir (madde 30'daki `_pending_lock` da aynı sınırda)
+- ~~`jobs.py` `write_pending_mirror` hâlâ düz `write_text` ile yazıyor (atomik değil)~~ → **yapıldı** (madde 30): atomik yazıcı + bozuk dosya karantinası; üç yazıcı tek yolda
 - `claim_new_job` içindeki `pending.json` kontrolü atomik INSERT'in **dışında** — DB tarafı atomik, dosya tarafı değil (legacy akış yalnızca kendi yazarıyla yarışabilir)
 - `claim_for_publish`'in "satır yok" dalı artık atomik, ama `_verify_approved_artifact` (hash doğrulaması) ile claim arasında dosya değişebilir: hash kontrolü kendi başına atomik değil, yalnızca TOCTOU penceresini daraltıyor
 - `/cleanup` için yarış ölçüldü ve düzeltildi; ama `_run_cleanup`'ın `pending.json` üzerinden `mark_done` çağırması ile eşzamanlı bir `/publish` hâlâ teorik olarak yarışabilir (ikisi de farklı kilitler kullanıyor)
@@ -1621,6 +1621,109 @@ Zip bomb'a karşı sınırlar: üye başına 20 MB, en çok 200 üye. Bozuk arş
 >
 > **Adım adım rehber hazır: [`docs/SIZINTI_TEMIZLIGI.md`](SIZINTI_TEMIZLIGI.md).** Yedek tarball'ın içi açıldı ve beklencenden ağır çıktı: içinde `n8n-data.tar` → `database.sqlite` (n8n credential deposu) + `config` → **`encryptionKey` (32 karakter)** var. Yani n8n üzerinden yönetilen her kimlik bilgisi açık kabul edilmeli.
 
+### 30. `pending.json` yarısı yazılabiliyordu: onay akışının sessiz kaybı (2026-11-02)
+
+Madde 29'da yayın kapısını açtım, yani artık *yayınlanabiliyor*. Bu turda yayınlanacak şeyin kendisine baktım: onay kaydı. `pending.json` public bir dosya — `catchup.py`, `daily_digest.py`, `telegram_bot.py`, `/pending` ve `/media` hepsi okuyor — ve **üç ayrı yazıcı** onu düz `write_text` ile yazıyordu.
+
+#### 30.1 Ölçüm: `open('w')` dosyayı önce sıfırlıyor
+
+```python
+with open(target, "w", encoding="utf-8") as fh:
+    print(target.stat().st_size)     # → 0     ← dosya daha tek bayt yazılmadan boş
+```
+
+`write_text` `O_TRUNC` ile açıyor, yani dosya *flush'tan önce* boş. Eşzamanlı bir okuyucu tam o pencerede bakarsa `{}`, `{"job_id": "leg` ya da boş gövde görüyor. Ölçüm (Windows, 4 okuyucu thread, 3000 ardışık yazma):
+
+| Ölçüm | Sonuç |
+| --- | --- |
+| Okuma sayısı | 682 |
+| `JSONDecodeError` | **392 (%57)** — "Unterminated string", "Expecting value" |
+
+#### 30.2 Sonuç kozmetik değildi
+
+Boş gövde `json.loads("{}")` → `{}` olduğu için **istisna bile atmıyordu**. `read_pending_payload` boş dict'i döndürüyor, `/pending` 404 veriyor, `telegram_bot` "bekleyen iş yok" sanıyor. Yani video üretilirken Telegram'da onaya basan operatöre *onaylanacak bir şey olmadığı* söyleniyordu — oysa gerçek onay hâlâ kurulu ve SQLite satırı `awaiting_approval`. Bu, madde 29'daki "kapı açılmıyor" hatasının kardeşi: bu kez kapı açık, ama basılacak düğme görünmüyor.
+
+#### 30.3 Bozuk dosya kalıcı 500 üretiyordu
+
+`read_pending_payload` ham `json.loads` çağırıyordu:
+
+```
+$ python -c "... json.loads(bozuk) ..."
+GET /pending   -> 500
+GET /media/x   -> 500
+```
+
+Tek çıkış yolu dosyayı **elle** silmekti: her istek aynı bozuk baytları yeniden ayrıştırıyordu. `jsonstore.read_json` bu iş için yazılmış (`<ad>.json.corrupt` karantinası + varsayılana düşme) ama `pending.json` onu kullanmıyordu — ve kullansaydı da yetmezdi: `read_json` yalnızca `JSONDecodeError`'ı yakalıyor; yarım çok baytlı karakter `UnicodeDecodeError` atıyor (*ölçüldü*) ve dosya karantinasız yerinde kalıyordu.
+
+#### 30.4 Düzeltme
+
+| Parça | Değişiklik |
+| --- | --- |
+| `write_pending_mirror` | `jsonstore.write_atomic` (yan dosyaya yaz + `os.replace`) |
+| `read_pending_payload` | `_read_json_tolerant`: `JSONDecodeError` + `UnicodeDecodeError` + `OSError` → `None` **ve** `.corrupt` karantinası |
+| Nesne olmayan JSON | `[1,2]` gibi geçerli ama nesne olmayan gövde `None` sayılıyor (eski kod `.get` çağrısında çökerdi) |
+| `clear_pending_mirror` | unlink retry — `main._unlink_quietly` ile aynı hata sınıfı, dosya farklıydı |
+| `remotion_runner` | kendi `write_text`'i yerine ortak yazıcı |
+| `daily_digest` | kendi `json.loads`'u yerine ortak okuyucu (bozuk dosya özeti tamamen düşürmesin) |
+
+#### 30.5 Windows dersi: atomik rename tek başına yetmiyor
+
+İlk denemede yalnızca `write_atomic` + `PermissionError` retry yazdım. Test **düştü**:
+
+```
+E   PermissionError: [WinError 5] Erişim engellendi:
+    '.pending.json.fw7gazik.tmp' -> 'pending.json'
+```
+
+Sebep ölçüldü: hedef dosya **başka bir thread'de okumak için açıkken** Windows `os.replace`'i reddediyor — 5 deneme de tükendi, çünkü okuyucular hiç durmuyor. Yani retry tek başına bir yarışı kaybediyor, sürekli bir engeli çözemiyor.
+
+Çözüm: `_pending_lock` ile süreç içindeki tüm `pending.json` erişimi (yaz/oku/sil) serileştirildi. video-worker tek süreç olarak çalıştığı için bu, kendi okuyucularımızın yol açtığı `WinError 5`'i **tamamen** kaldırıyor. Retry yalnızca süreç dışı tutamaklar (n8n, host aracı) için kaldı; onlar yüzünden yazma başarısız olursa istisna yükseliyor — sessizce atomik olmayan yazmaya düşmek yarım dosya riskini geri getirirdi.
+
+#### 30.6 On iki test, üç mutasyon
+
+`tests/test_pending_atomic.py` (yeni, 12 test):
+
+| Test | Neyi kilitliyor |
+| --- | --- |
+| `test_write_pending_mirror_never_exposes_partial_json` | 4 okuyucu + 300 yazma: tek bozuk okuma yok |
+| `test_write_pending_mirror_leaves_no_temp_files` | atomik yazıcı geçici dosya bırakmaz |
+| `test_corrupt_pending_json_is_quarantined_and_read_as_absent` | bozuk dosya → `None` + karantina |
+| `test_invalid_utf8_pending_json_is_quarantined` | `UnicodeDecodeError` da yakalanır |
+| `test_json_array_pending_payload_is_treated_as_absent` | nesne olmayan gövde çökertmez |
+| `test_get_pending_returns_404_for_corrupt_file` | endpoint 500 değil 404 |
+| `test_get_media_returns_404_for_corrupt_pending` | aynısı `/media` için |
+| `test_daily_digest_survives_corrupt_pending` | özet mesajı düşmez |
+| `test_daily_digest_reports_pending_from_mirror` | aşırı karantinaya alma nöbeti |
+| `test_write_pending_mirror_still_raises_when_replace_really_fails` | retry körlemesine yutmuyor (10 deneme sonra istisna) |
+| `test_unlink_with_retry_tolerates_concurrent_delete` | 8 thread eşzamanlı silme, 10 tekrar |
+| `test_unlink_with_retry_still_raises_when_delete_really_fails` | gerçek kilit hatası yükselir |
+
+**Mutasyon kanıtı.**
+
+| Mutasyon | Sonuç |
+| --- | --- |
+| atomik yazıcı → düz `write_text` | **2 test düştü** |
+| karantina çağrısı → `pass` | **2 test düştü** |
+| `with _pending_lock:` → `if True:` (kilit yok) | 12/12 **geçti** — dürüst sonuç |
+| kilit yok **+** retry 10 → 5 | **3/3 tekrarda düştü** |
+
+Üçüncü satır önemli: uzun retry bütçesi tek başına kilidin işini "görünmez" şekilde yapıyordu. Testi kilide bağımlı göstermek için retry'ı eski değere çektim ve 3 tekrarda da düştüğünü ölçtüm. Yani koruma gerçek, ama *hangi* mekanizmanın koruduğunu ayırt etmek için ölçüm gerekti.
+
+#### 30.7 Doğrulama
+
+```
+pytest -q                      → 808 passed, 3 skipped   (796 → 808, +12)
+ruff E9,F63,F7,F82             → All checks passed!
+```
+
+#### 30.8 Kalan sınırlar (dürüst)
+
+- **Kilit süreç içi.** `video-worker` tek replika çalışıyor; birden çok replikaya çıkılırsa `_pending_lock` yetmez, dosya düzeyinde kilit (veya `pending.json`'ı tamamen bırakıp SQLite'ı tek kaynak yapmak) gerekir. `jsonstore` için de aynı sınır zaten belgelenmişti.
+- **`pending.json` hâlâ ikinci bir doğruluk kaynağı.** SQLite `awaiting_approval` ile bu dosya iki ayrı yerde tutuluyor; atomiklik dosya başına sağlandı ama *ikisi arasında* bir işlem sınırı yok. Dosya ile DB çelişirse `read_pending_payload` DB'yi tercih ediyor (kasıtlı), fakat bir gün dosyayı tamamen kaldırmak doğru çözüm.
+- **Karantina "onay kaybı olabilir" diyor ama kurtarmıyor.** Bozuk dosya `.corrupt` olarak saklanıyor ve loglanıyor; içinden kısmi veri çıkarma (ör. yarım JSON'u onarma) denenmiyor.
+- `telegram_bot.py` hâlâ `read_pending_payload` üzerinden okuyor (iyi), ama kendi `is_file()` kontrolleri de var; bunlar bozuk dosyada "bekleyen iş var" deyip ardından `None` alabilir. Davranış bugün doğru (onay yok), yine de iki ayrı sinyalin tutarlılığı test edilmiyor.
+- **`_run_cleanup` + eşzamanlı `/publish`** yarışı hâlâ teorik olarak mümkün: ikisi farklı kilitler kullanıyor (`_pending_lock` yalnızca dosyayı koruyor, `claim_for_publish` SQLite'ı).
+
 
 | Commit | İçerik |
 |---|---|
@@ -1667,6 +1770,7 @@ Zip bomb'a karşı sınırlar: üye başına 20 MB, en çok 200 üye. Bozuk arş
 | `—` | Otonom yayın kapısı gerçekten açılabilir hale getirildi: onay yetkisi + `.env.example` + README (madde 29) |
 | `—` | Onay mesajı artık yalan söylemiyor; operatöre ne olacağı doğru bildiriliyor (madde 29.5) |
 | `—` | Sır tarayıcısı commit edilmiş arşivleri açıyor: `backups/*.tar.gz` kör noktası kapandı (madde 29.7) |
+| `—` | `pending.json` atomik yazılıyor + bozuk dosya karantinaya alınıyor; 3 yazıcı tek yolda (madde 30) |
 
 > Bu belgeyi güncelleyen commit ayrıca `docs:` önekiyle geçmişte bulunabilir (kendi hash'ini içeremez).
 

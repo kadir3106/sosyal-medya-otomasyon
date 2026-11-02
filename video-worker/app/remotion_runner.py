@@ -125,8 +125,11 @@ def run_remotion_pipeline(topic: str, mock: bool = False) -> dict:
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
 
-    pending_file = Path(config.MEDIA_DIR) / "pending.json"
-    pending_file.write_text(json.dumps(pending_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    # Ortak atomik yazici: duz write_text dosyayi once sifirlar, o pencere
+    # icinde okuyan Telegram/`/pending` yarim JSON gorur (olculdu: %57).
+    from app.jobs import write_pending_mirror
+
+    write_pending_mirror(config.MEDIA_DIR, pending_payload)
 
     update_pipeline_status("completed", 100, "Video hazır! Telegram onayı bekleniyor.", topic=topic)
 
