@@ -1,0 +1,111 @@
+{
+  "vlm_calls": 7,
+  "search_calls": 0,
+  "prefilter_rejects": 0,
+  "accept": 2,
+  "reject": 4,
+  "uncertain": 1,
+  "generic_filler_selected": 0,
+  "river_selected": false,
+  "bakery_selected": false,
+  "remote_vlm_validated": false,
+  "shot_requirements": 6,
+  "selected_shots": 2,
+  "unique_source_assets": 2,
+  "unique_vius": 2,
+  "covered_beats": 2,
+  "partial_beats": 0,
+  "uncovered_beats": 4,
+  "recovery_attempts": 4,
+  "motion_graphic_plans": 0,
+  "generated_visual_plans": 0,
+  "beats": [
+    {
+      "beat": "b_product",
+      "role": "REVEAL",
+      "intent": "Rolex Daytona",
+      "purpose": "SHOW_PRODUCT",
+      "motion": "PREFERRED",
+      "evidence": "ILLUSTRATION_ACCEPTABLE",
+      "selected": "c_watch",
+      "why": "purpose=SHOW_PRODUCT; entity=STRONG; concept=STRONG; evidence=ILLUSTRATION; novelty=new; score=0.732",
+      "viu": "viu:ffee434f542b019a",
+      "coverage": "COVERED",
+      "recovery": []
+    },
+    {
+      "beat": "b_person",
+      "role": "PERSON",
+      "intent": "founder portrait",
+      "purpose": "SHOW_PERSON",
+      "motion": "NOT_NEEDED",
+      "evidence": "AUTHENTIC_CONTEXT_REQUIRED",
+      "selected": "c_port",
+      "why": "purpose=SHOW_PERSON; entity=PARTIAL; concept=STRONG; evidence=AUTHENTIC_CONTEXT; novelty=new; score=0.637",
+      "viu": "viu:5e1ffd26f689fd22",
+      "coverage": "COVERED",
+      "recovery": []
+    },
+    {
+      "beat": "b_own",
+      "role": "EVIDENCE",
+      "intent": "ownership evidence",
+      "purpose": "SHOW_EVIDENCE",
+      "motion": "NOT_NEEDED",
+      "evidence": "EVIDENCE_REQUIRED",
+      "selected": null,
+      "why": null,
+      "viu": null,
+      "coverage": "UNCOVERED",
+      "recovery": [
+        "ENTITY_SPECIFIC_REQUERY"
+      ]
+    },
+    {
+      "beat": "b_proc",
+      "role": "PROCESS",
+      "intent": "manufacturing assembly",
+      "purpose": "SHOW_PROCESS",
+      "motion": "REQUIRED",
+      "evidence": "ILLUSTRATION_ACCEPTABLE",
+      "selected": null,
+      "why": null,
+      "viu": null,
+      "coverage": "UNCOVERED",
+      "recovery": [
+        "ALTERNATE_VIDEO_PROVIDER_OR_GENERATED_PLACEHOLDER"
+      ]
+    },
+    {
+      "beat": "b_loc",
+      "role": "LOCATION",
+      "intent": "Geneva city",
+      "purpose": "SHOW_LOCATION",
+      "motion": "PREFERRED",
+      "evidence": "ILLUSTRATION_ACCEPTABLE",
+      "selected": null,
+      "why": null,
+      "viu": null,
+      "coverage": "UNCOVERED",
+      "recovery": [
+        "ALTERNATE_QUERY_FAMILY"
+      ]
+    },
+    {
+      "beat": "b_fin",
+      "role": "SETUP",
+      "intent": "financial context illustration",
+      "purpose": "ESTABLISH_CONTEXT",
+      "motion": "OPTIONAL",
+      "evidence": "ILLUSTRATION_ACCEPTABLE",
+      "selected": null,
+      "why": null,
+      "viu": null,
+      "coverage": "UNCOVERED",
+      "recovery": [
+        "REVIEW_REQUIRED"
+      ]
+    }
+  ],
+  "remote_vlm_note": "keys present; model returned VLM_INVALID_RESPONSE (not vision-validated)"
+}

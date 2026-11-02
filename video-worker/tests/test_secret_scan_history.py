@@ -12,6 +12,7 @@ tarayıcı "Temiz: 394 dosyada sır deseni bulunamadı" diyordu. İki nedenle:
 Testler hem körlüğü hem de yanlış alarmı iki yönde sabitler.
 """
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -80,6 +81,37 @@ def test_does_not_flag_ordinary_source_files():
 def test_video_output_is_not_skipped():
     """Ölçülen kör nokta: hem ağaçta hem geçmişte taranmalı."""
     assert "video-output" not in secret_scan.SKIP_DIR_PARTS
+
+
+def test_tracked_video_output_files_are_still_scanned():
+    """Asıl iddia bu: ignore deseni eşleşse bile İZLENEN dosya taranmalı.
+
+    Neden ayrı test: `test_video_output_is_not_skipped` yalnız
+    `SKIP_DIR_PARTS`'e bakıyor ve `.gitignore` değiştiğinde yanıltıcı güvence
+    veriyor. Ölçüm (2026-11-02): `.gitignore`'a `**/video-output/*` eklenince
+    `video-worker/video-output/` altındaki 317 kanıt dosyası kapsam dışına
+    çıktı; sayı 764 -> 446'ya düştü. O dosyalar commit edilmeyeceği için
+    taranmamaları doğru — ama **izlenen** `used_prompts.json` gibi dosyalar
+    ignore desenine uysa bile taranmaya devam etmeli.
+    """
+    repo = Path(__file__).resolve().parent.parent.parent
+    targets = {p.as_posix() for p in secret_scan.scan_targets(repo)}
+
+    assert "video-worker/video-output/used_prompts.json" in targets, (
+        "izlenen bir video-output dosyası tarama listesinden düştü")
+    # İzlenen dosya sayısı `git ls-files --cached` ile tutarlı olmalı.
+    tracked = {
+        line for line in subprocess.run(
+            ["git", "ls-files"], cwd=str(repo), capture_output=True,
+            text=True, check=True,
+        ).stdout.splitlines() if line
+    }
+    video_output_tracked = {t for t in tracked if "/video-output/" in t or
+                            t.startswith("video-output/")}
+    assert video_output_tracked, "beklenen: en az bir izlenen video-output dosyası"
+    missing = video_output_tracked - targets
+    assert not missing, f"izlenen ama taranmayan: {sorted(missing)[:5]}"
+
 
 
 def test_untracked_files_are_scanned(tmp_path, monkeypatch):

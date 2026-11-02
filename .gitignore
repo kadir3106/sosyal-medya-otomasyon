@@ -11,8 +11,15 @@
 **/tiktok_session/**
 
 # Local media / session junk (keep branding assets + audio SFX tracked)
-backups/*
-!backups/.gitkeep
+#
+# `/` ÖNEKİ ZORUNLU: bu dosya kökte yaşıyor ama desenler ağacın her yerinde
+# geçerli. `/` olmadan `video-output/*` yalnız kök dizini kapsıyor, oysa
+# `video-worker/video-output/` (container'ın gerçek çalışma dizini) kapsam
+# dışında kalıyordu. Ölçüm (2026-11-02): 390 dosyanın 317'si "yok sayılmıyor"
+# görünüyordu — 152 JSON + 24 MD kanıt dosyası `git add .` ile içeri girecekti.
+# `/` eklenince 317 -> 0.
+/backups/*
+!/backups/.gitkeep
 *.tar.gz
 # Git bundle = tüm geçmişin kopyası; sızan nesneleri (tiktok_session profili,
 # n8n encryptionKey) taşır. Depo içine asla girmemeli.
@@ -20,20 +27,29 @@ backups/*
 # `scripts/seal_leak_copies.py` çıktısı: mühürlü ama yine de bir yedek kopya.
 # Commit'lenmesi, sırrı şifreli de olsa yaymak olur.
 *.sealed
-video-output/*
-!video-output/.gitkeep
-!video-output/branding/
-!video-output/branding/**
-!video-output/audio/
-!video-output/audio/**
+# Tüm ağaçtaki video-output dizinleri (kök + video-worker container yolu).
+# İstisnalar aşağıda; `.gitkeep` ve `branding/` izlenmeye devam eder.
+**/video-output/*
+!**/video-output/.gitkeep
+!**/video-output/branding/
+!**/video-output/branding/**
+# `audio/sfx/` (kaynak ses efekti) izlenir; `audio/bgm/` üretim çıktısıdır.
+!/video-output/audio/
+!/video-output/audio/**
+!/video-output/audio/sfx/
+!/video-output/audio/sfx/**
 
 # Extra session / runtime guards
-video-output/tiktok_session/
-video-output/tiktok_session/**
-video-output/work/
-video-output/failed/
-video-output/jobs.db
-video-output/jobs.db-*
+**/video-output/tiktok_session/
+**/video-output/tiktok_session/**
+**/video-output/work/
+**/video-output/failed/
+**/video-output/jobs.db
+**/video-output/jobs.db-*
+
+# Test/araç venv'i (çoğaltılabilir; .superpowers içinde kuruluyor)
+.superpowers/
+
 
 # Build / runtime
 *.mp4
