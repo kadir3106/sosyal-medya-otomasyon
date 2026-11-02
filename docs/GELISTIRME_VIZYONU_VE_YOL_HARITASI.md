@@ -1546,14 +1546,78 @@ Diğer değişiklikler:
 #### 29.6 Doğrulama
 
 ```
-pytest -q                      → 790 passed, 3 skipped   (750 → 790, +40)
+pytest -q                      → 796 passed, 3 skipped   (750 → 796, +46)
 ruff E9,F63,F7,F82             → All checks passed!
 secret_scan.py                 → 768 dosyada temiz
+secret_scan.py --history       → 15 bulgu, 0 YENİ (baseline'da kabul)
 ```
+
+#### 29.7 Sır tarayıcısının ikinci kör noktası: commit edilmiş arşivler
+
+Madde 26'da tarayıcıya `--history` modunu eklerken körlüğün bir sınıfını kapattım: izlenen dosyalar. Ama ikili bir blob'a gelince tarayıcı hâlâ **sessizce** susuyordu:
+
+```python
+if size > max_bytes or b"\x00" in data[:8000]:
+    continue          # ← iter_history_texts, satır 153
+```
+
+`gzip` çıktısı `\x00` içerir, yani bir `.tar.gz` bu dalda düşer ve hiç taranmaz. `.zip` ise `SKIP_SUFFIXES`'te olduğu için HEAD taramasında da görünmezdi. Ölçüm:
+
+| Yer | Ölçüm |
+| --- | --- |
+| Geçmişteki arşiv | `backups/otomasyon-yedek-2026-09-05.tar.gz` (`a3682ba`) — **tam yedek** |
+| HEAD'deki arşiv | 0 |
+| `--history` bunu görüyor muydu | **hayır**, "geçmişte yeni sır yok" diyordu |
+
+Bir yedek tarball, tanımı gereği `.env` dahil her şeyi içerir. Tarayıcının onu "temiz" sayması, güvenlik kapısının en değerli bulguyu kaçırması demekti.
+
+**Düzeltme: "ikili = temiz" varsayımını kaldırdım.**
+
+```python
+ARCHIVE_SUFFIXES = (".zip", ".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz2",
+                    ".tar.xz", ".txz", ".7z", ".rar", ".gz", ".bz2", ".xz")
+
+def path_is_archive(path: str) -> bool:
+    return path.lower().endswith(ARCHIVE_SUFFIXES)
+```
+
+Üç noktada kullanılıyor:
+
+1. **Yol dedektörü** (`archive_file`) — arşivin *kendisi* bulgu. İçeriği hiç açılamasa bile commit edilmiş bir yedek raporlanır.
+2. **`iter_history_texts(..., include_archives=True)`** — arşiv blob'u açılır, metin üyeleri taranır. Üye yolu `yedek.tar.gz!app/.env` biçiminde raporlanır.
+3. **HEAD taraması** — `SKIP_SUFFIXES`'teki `.zip` artık arşivse atlanmıyor; açılıp içi taranıyor.
+
+Zip bomb'a karşı sınırlar: üye başına 20 MB, en çok 200 üye. Bozuk arşiv **istisna fırlatmaz** (boş liste döner) — ama yol bulgusu yine üretilir, yani "açamadım" asla "temiz" olmaz.
+
+**Yedi yeni test** (`tests/test_secret_scan_history.py`, 33 → 40):
+
+| Test | Neyi kilitliyor |
+| --- | --- |
+| `test_path_detector_flags_archives` | `.tar.gz`, `.zip`, `.tgz` yol olarak bulgu |
+| `test_path_is_archive_matches_detector` | Yardımcı ile dedektör aynı listeyi kullanır (ayrışırsa körlük döner) |
+| `test_archive_contents_are_actually_read` | Tarball içindeki `sk-...` gerçekten bulunur |
+| `test_zip_archive_contents_are_read` | Zip içeriği okunur |
+| `test_broken_archive_does_not_crash_and_still_flags_path` | Bozuk arşiv çökmez, yol bulgusu kalır |
+| `test_history_scan_opens_archives` | `--history` `include_archives=True` geçirir |
+
+**Mutasyon kanıtı.** `include_archives=True` kaldırıldığında **1 test düştü** (`test_history_scan_opens_archives`); `path_is_archive` → `return False` yapıldığında **1 test düştü** (`test_path_is_archive_matches_detector`).
+
+> **Kendi hatam:** ikinci mutasyonu geri alırken `data.replace("return False", ...)` kullandım ve bu, `_sequential_run` içindeki *başka* bir `return False`'u da değiştirdi (`F821 Undefined name 'path'`). Ruff yakaladı, düzelttim. Metin değiştirme yerine hedefli düzenleme kullanmalıydım.
+
+**Doğrulama:** `--history` artık 15 bulgu (6 yol, 9 içerik) raporluyor — önce 14'tü, yeni olan `backups/otomasyon-yedek-2026-09-05.tar.gz`. Baseline'a bilinçli kabul olarak eklendi (`--update-baseline`), sonrasında `0 YENİ`.
 
 **Sınır (dürüst):** `scripts/` altındaki `daily_autonomous_agent.py` hâlâ tam kapsanmıyor. Gerçek birim testi `execute_daily_run`'ın yan etkilerini (render, yayın, Telegram) teker teker sarmalamayı gerektirir; bugün yalnızca imza/çağrı tutarlılığı, CLI argüman ayrıştırması ve yayın kapısı kilitli. Ajanın iç mantığı hâlâ test edilmiyor.
 
-> **Açık kalan (karar bekliyor):** sızan kimlik bilgilerinin döndürülmesi (TikTok oturumu, TikTok PKCE/OAuth token'ları, `.env`'deki 38 dolu anahtar) ve `video-output/tiktok_session/` dizisinin geçmişten silinmesi (`git filter-repo`) **yapılmadı**. İkisi de yıkıcı işlem; onay bekliyor. Bu yüzden `scripts/secret_scan_baseline.json` bilinçli olarak boş değil (14 kabul kaydı).
+> **Açık kalan (karar bekliyor):** geçmişte kalan gerçek sızıntının temizlenmesi. Ölçüm (2026-11-02):
+>
+> | Kalem | Ölçüm | Gerçek mi |
+> | --- | --- | --- |
+> | `video-output/tiktok_session/` | **1015 dosya**, 2 commit | **evet** — tarayıcı oturumu, çerezler, giriş verisi |
+> | `backups/otomasyon-yedek-2026-09-05.tar.gz` | 1 dosya | **evet** — tam yedek; içeriği bilinmiyor, 2026-09-05'te var olan her sır açık sayılmalı |
+> | `secret_scan_baseline.json` kayıtları | **14** | 8'i sahte (`tests/test_secret_scan*.py` içindeki `_fake()` fixture'ları), **6'sı gerçek** (yukarıdaki oturum dizisi + yedek arşiv) |
+> | `.env` | **9 dolu anahtar** | **hayır** — `.gitignore:2` kapsamında, hiç commit edilmemiş |
+>
+> Temizlik üç adım: (1) TikTok oturumunu **iptal etmek** (tüm cihazlardan çıkış), (2) yedek tarball'ın içindeki her sırrı **döndürmek**, (3) `git filter-repo` ile her iki yolu geçmişten silmek. Hepsi yıkıcı/geri alınamaz olduğu için **onay bekliyor**; bu yüzden baseline bilinçli olarak boş değil.
 
 
 | Commit | İçerik |
@@ -1599,6 +1663,8 @@ secret_scan.py                 → 768 dosyada temiz
 | `—` | TikTok web yolu opt-in: tembel import + `.dockerignore` (754 MB → 3 MB) + oturum aracı (madde 28) |
 | `—` | Madde 27.1–27.3: üretim logunda 38 çökme kanıtı + 20 davranış testi |
 | `—` | Otonom yayın kapısı gerçekten açılabilir hale getirildi: onay yetkisi + `.env.example` + README (madde 29) |
+| `—` | Onay mesajı artık yalan söylemiyor; operatöre ne olacağı doğru bildiriliyor (madde 29.5) |
+| `—` | Sır tarayıcısı commit edilmiş arşivleri açıyor: `backups/*.tar.gz` kör noktası kapandı (madde 29.7) |
 
 > Bu belgeyi güncelleyen commit ayrıca `docs:` önekiyle geçmişte bulunabilir (kendi hash'ini içeremez).
 

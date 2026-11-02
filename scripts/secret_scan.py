@@ -54,6 +54,20 @@ SKIP_SUFFIXES = (
 # altında 88 izlenen dosya vardı ve tarayıcı onları hiç görmedi.
 SKIP_DIR_PARTS = ("node_modules", ".git", "__pycache__", "_tmp")
 
+# Arşivler: içeriği metin olarak okunamaz, ama SESSİZCE atlanamaz.
+# Ölçüm (2026-11-02): geçmişte `backups/otomasyon-yedek-2026-09-05.tar.gz`
+# vardı — tam yedek. `iter_history_texts` ikili blob'ları (gzip `\x00` içerir)
+# sessizce atladığı için tarayıcı onu hiç görmedi ve "geçmişte yeni sır yok"
+# dedi. `.zip` de `SKIP_SUFFIXES`'te olduğundan HEAD taramasında da görünmezdi.
+# Sınıfın kuralı: ikili olması "temiz" demek değil, "okunamadı" demek.
+ARCHIVE_SUFFIXES = (
+    ".zip", ".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".tar.xz",
+    ".txz", ".7z", ".rar", ".gz", ".bz2", ".xz",
+)
+# Zip bomb'a karşı: üye sayısı ve toplam açılmış boyut sınırlı.
+MAX_ARCHIVE_MEMBERS = 200
+MAX_ARCHIVE_BYTES = 20_000_000
+
 # ---------------------------------------------------------------------------
 # YOL TABANLI DEDEKTÖRLER
 #
@@ -77,7 +91,20 @@ DANGEROUS_PATH_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # değil. Ölçüm: ilk sürüm `(^|/)\.env$` idi ve geçici depoda `prod.env`
     # sızıntısını KAÇIRDI (uçtan uca test yakaladı).
     ("dotenv", re.compile(r"(?i)\.env$")),
+    # Arşiv: içeriği açılamasa bile commit edilmiş bir yedek/zip yolun kendisi
+    # bulgudur. `path_is_archive` ile aynı listeyi kullanır.
+    (
+        "archive_file",
+        re.compile(
+            r"(?i)\.(zip|tar|tar\.gz|tgz|tar\.bz2|tbz2|tar\.xz|txz|7z|rar|gz|bz2|xz)$"
+        ),
+    ),
 ]
+
+
+def path_is_archive(path: str) -> bool:
+    """Yol bir arşiv mi? `ARCHIVE_SUFFIXES` tek doğruluk kaynağı."""
+    return path.lower().endswith(ARCHIVE_SUFFIXES)
 
 # Şablon dosyaları gerçek sır taşımaz; yol deseni eşleşse de yok sayılır.
 PATH_ALLOWLIST_SUBSTRINGS = ("example", "sample", "template", ".dist", "placeholder")
@@ -124,12 +151,20 @@ def history_objects() -> list[tuple[str, str]]:
 
 
 def iter_history_texts(
-    pairs: list[tuple[str, str]], *, max_bytes: int = 2_000_000
+    pairs: list[tuple[str, str]],
+    *,
+    max_bytes: int = 2_000_000,
+    include_archives: bool = False,
 ) -> list[tuple[str, str]]:
     """(path, text) — ikili ve aşırı büyük blob'lar atlanır.
 
     Tek `cat-file --batch` süreci kullanılıyor: blob başına ayrı `git` çağrısı
     1774 blob'da dakikalarca sürüyordu, batch ile 2.3 sn (ölçüldü).
+
+    `include_archives=True`: arşiv blob'ları ikili olduğu için normalde
+    atlanırdı. Bu modda açılır ve metin olarak döndürülür. Ölçüm (2026-11-02):
+    varsayılan davranış `backups/otomasyon-yedek-2026-09-05.tar.gz`'yi hiç
+    görmedi ve tarayıcı "geçmişte yeni sır yok" dedi.
     """
     seen: set[str] = set()
     texts: list[tuple[str, str]] = []
@@ -150,6 +185,11 @@ def iter_history_texts(
             size = int(header[2])
             data = proc.stdout.read(size)
             proc.stdout.read(1)  # satır sonu
+            if include_archives and path_is_archive(path):
+                # Arşiv boyutu `max_bytes`'i aşsa bile açılmış içerik sınırlı
+                # olduğu için denemeye değer; sınır `read_archive_texts`'te.
+                texts.extend(read_archive_texts(path, data))
+                continue
             if size > max_bytes or b"\x00" in data[:8000]:
                 continue
             texts.append((path, data.decode("utf-8", "replace")))
@@ -157,6 +197,56 @@ def iter_history_texts(
         proc.stdin.close()
         proc.wait()
     return texts
+
+
+def read_archive_texts(path: str, data: bytes) -> list[tuple[str, str]]:
+    """Arşiv blob'unu açıp metin üyelerini döndürür: (üye yolu, metin).
+
+    Yalnızca metin gibi görünen üyeler taranır; ikili üyeler (video, sqlite)
+    atlanır — onların tehlikesi içeriklerinde değil, varlıklarında. Bu yüzden
+    çağıran taraf arşivin kendisini de yol deseniyle ayrıca raporlar.
+
+    Bozuk/açılamayan arşiv **sessizce geçilmez**: boş liste döner ama `path_is_archive`
+    sayesinde yol deseni yine bulgu üretir. Böylece "açamadım" asla "temiz" olmaz.
+    """
+    import io
+    import tarfile
+    import zipfile
+
+    members: list[tuple[str, bytes]] = []
+    try:
+        if zipfile.is_zipfile(io.BytesIO(data)):
+            with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                for info in zf.infolist()[:MAX_ARCHIVE_MEMBERS]:
+                    if info.file_size > MAX_ARCHIVE_BYTES:
+                        continue
+                    with zf.open(info) as fh:
+                        members.append((info.filename, fh.read(MAX_ARCHIVE_BYTES)))
+        elif tarfile.is_tarfile(io.BytesIO(data)):
+            with tarfile.open(fileobj=io.BytesIO(data)) as tf:
+                for member in tf.getmembers()[:MAX_ARCHIVE_MEMBERS]:
+                    if not member.isfile() or member.size > MAX_ARCHIVE_BYTES:
+                        continue
+                    fh = tf.extractfile(member)
+                    if fh is not None:
+                        members.append((member.name, fh.read(MAX_ARCHIVE_BYTES)))
+        elif data[:2] == b"\x1f\x8b":
+            # Tek gzip: üye yolu bilinmiyor, arşivin yolunu kullan.
+            import gzip
+
+            raw = gzip.decompress(data)[:MAX_ARCHIVE_BYTES]
+            members.append((path, raw))
+        else:
+            return []
+    except (OSError, ValueError, zipfile.BadZipFile, tarfile.TarError):
+        return []
+
+    out: list[tuple[str, str]] = []
+    for name, raw in members:
+        if b"\x00" in raw[:8000]:
+            continue
+        out.append((f"{path}!{name}", raw.decode("utf-8", "replace")))
+    return out
 
 
 def _sequential_run(value: str, run: int = 10) -> bool:
@@ -258,8 +348,10 @@ def scan_history_struct() -> tuple[list[dict], dict[str, int]]:
 
     # HEAD karşılaştırması *değerin* hâlâ orada olmasına bakar, dosyanın
     # var olmasına değil: `31ec209` fixture'ları temizledi ama dosya duruyor.
+    # `include_archives=True`: commit edilmiş yedek/zip içeriği de taranır.
+    # Varsayılan `False` olsaydı `backups/*.tar.gz` sınıfı yine görünmezdi.
     content_hits: list[tuple[str, int, str, str, str]] = []
-    for path, text in iter_history_texts(pairs):
+    for path, text in iter_history_texts(pairs, include_archives=True):
         for name, lineno, value, snippet in scan_text_values(text):
             content_hits.append((path, lineno, name, value, snippet))
 
@@ -430,12 +522,26 @@ def main(argv: list[str] | None = None) -> int:
     targets = scan_targets(root)
     for path in targets:
         rel = path.as_posix()
-        if path.suffix.lower() in SKIP_SUFFIXES:
+        if path.suffix.lower() in SKIP_SUFFIXES and not path_is_archive(rel):
             continue
         if any(part in path.parts for part in SKIP_DIR_PARTS):
             continue
         full = root / path
         if not full.is_file():
+            continue
+        # Arşiv: metin olarak okunamaz, bu yüzden açılıp içi taranır. Ölçüm
+        # (2026-11-02): `.zip` `SKIP_SUFFIXES`'te olduğu için commit edilmiş bir
+        # yedek arşivi HEAD taramasında hiç görünmüyordu.
+        if path_is_archive(rel):
+            try:
+                raw = full.read_bytes()
+            except OSError:
+                continue
+            for member_path, text in read_archive_texts(rel, raw):
+                for name, lineno, snippet in scan_text(text):
+                    findings.append(f"{member_path}:{lineno}: {name} ({snippet})")
+            for detector, matched in scan_path(rel):
+                findings.append(f"{rel}: {detector} ({matched})")
             continue
         try:
             text = full.read_text(encoding="utf-8", errors="ignore")

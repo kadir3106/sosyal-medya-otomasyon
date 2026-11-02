@@ -210,3 +210,101 @@ def test_all_baseline_findings_pass(monkeypatch, capsys):
         lambda *a, **k: {finding_key("path", "browser_cookies", "old/Cookies")},
     )
     assert secret_scan.main(["--history"]) == 0
+
+
+# --- Arşiv kör noktası (madde 29.7) ---------------------------------------
+#
+# Ölçüm (2026-11-02): geçmişte `backups/otomasyon-yedek-2026-09-05.tar.gz`
+# vardı. `iter_history_texts` ikili blob'ları (gzip `\x00` içerir) sessizce
+# atladığı için tarayıcı onu hiç görmedi ve "geçmişte yeni sır yok" dedi.
+# `.zip` ayrıca `SKIP_SUFFIXES`'teydi, yani HEAD taramasında da görünmezdi.
+
+def test_path_detector_flags_archives():
+    """Arşivin kendisi bulgudur — içeriği açılamasa bile."""
+    names = [h[0] for h in scan_path("backups/otomasyon-yedek-2026-09-05.tar.gz")]
+    assert "archive_file" in names
+    assert "archive_file" in [h[0] for h in scan_path("dump.zip")]
+    assert "archive_file" in [h[0] for h in scan_path("a/b/state.tgz")]
+
+
+def test_path_is_archive_matches_detector():
+    """`path_is_archive` ile dedektör aynı listeyi kullanmalı.
+
+    İkisi ayrışırsa içerik taraması açılır ama yol bulgusu üretilmez (veya
+    tersi) — kör nokta sessizce geri gelir.
+    """
+    for name in ("x.tar.gz", "x.zip", "x.7z", "x.tar.bz2", "x.txz"):
+        assert secret_scan.path_is_archive(name), name
+        assert "archive_file" in [h[0] for h in scan_path(name)], name
+    for name in ("x.py", "x.json", "x.gz.txt", "arşiv/notlar"):
+        assert not secret_scan.path_is_archive(name), name
+
+
+def _tar_gz(members: dict[str, bytes]) -> bytes:
+    """Bellek içi .tar.gz üretir."""
+    import io
+    import tarfile
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        for name, payload in members.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(payload)
+            tf.addfile(info, io.BytesIO(payload))
+    return buf.getvalue()
+
+
+def test_archive_contents_are_actually_read():
+    """Tarball içindeki sır, gzip'li olmasına rağmen bulunmalı.
+
+    Bu, düzeltmenin kalbi: `read_archive_texts` açmazsa tarayıcı yine kördür.
+    """
+    data = _tar_gz({"app/.env": b'OPENAI_API_KEY="sk-' + b"A" * 30 + b'"\n'})
+    texts = secret_scan.read_archive_texts("backups/yedek.tar.gz", data)
+    assert texts, "arşiv açılmadı"
+    values = [v for _, text in texts for _, _, v, _ in scan_text_values(text)]
+    assert any(v.startswith("sk-") for v in values)
+
+
+def test_zip_archive_contents_are_read():
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("config.py", 'GROQ_API_KEY="gsk_' + "B" * 30 + '"\n')
+    texts = secret_scan.read_archive_texts("dump.zip", buf.getvalue())
+    assert any("gsk_" in text for _, text in texts)
+
+
+def test_broken_archive_does_not_crash_and_still_flags_path():
+    """Bozuk arşiv istisna fırlatmamalı — ama yol bulgusu yine üretilmeli.
+
+    "Açamadım" asla "temiz" anlamına gelmemeli.
+    """
+    assert secret_scan.read_archive_texts("bozuk.tar.gz", b"not an archive") == []
+    assert "archive_file" in [h[0] for h in scan_path("bozuk.tar.gz")]
+
+
+def test_history_scan_opens_archives(monkeypatch, capsys):
+    """`--history` arşivleri açarak taramalı.
+
+    `include_archives=False` kalsaydı `backups/*.tar.gz` sınıfı yine görünmezdi.
+    """
+    data = _tar_gz({"app/.env": b'OPENAI_API_KEY="sk-' + b"C" * 30 + b'"\n'})
+    captured: dict[str, bool] = {}
+
+    def fake_iter(pairs, *, max_bytes=2_000_000, include_archives=False):
+        captured["include_archives"] = include_archives
+        return []
+
+    monkeypatch.setattr(secret_scan, "history_objects", lambda: [("sha", "backups/x.tar.gz")])
+    monkeypatch.setattr(secret_scan, "iter_history_texts", fake_iter)
+    monkeypatch.setattr(secret_scan, "_head_texts", lambda paths: {})
+    monkeypatch.setattr(secret_scan, "load_baseline", lambda *a, **k: set())
+
+    found, _counts = secret_scan.scan_history_struct()
+    assert captured["include_archives"] is True, "geçmiş taraması arşivleri açmıyor"
+    # Yol bulgusu arşivden bağımsız olarak üretilmeli.
+    assert any("backups/x.tar.gz" == f["path"] for f in found)
+    assert data  # üretilen arşiv kullanıldı (regresyon amaçlı referans)

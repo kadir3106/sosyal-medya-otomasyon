@@ -45,7 +45,11 @@ n8n arayüzü: http://localhost:5678
 
 ## Security note (credential rotation)
 
-`main` previously tracked a Playwright TikTok browser profile under `video-output/tiktok_session/` and a backup tarball. Those paths are now gitignored and untracked on this branch, but **anything that was ever public should be rotated**: TikTok session/cookies, TikTok PKCE/OAuth tokens, and any secrets that may have lived inside `backups/*.tar.gz`. History rewrite is optional; rotation is not.
+`main` previously tracked a Playwright TikTok browser profile under `video-output/tiktok_session/` (1015 files across 2 commits). Those paths are now gitignored and untracked on this branch, but **the TikTok session/cookies that lived there are still valid credentials** — revoke them from TikTok (log out all sessions) and re-run `scripts/refresh_tiktok_session.py`.
+
+Measured scope of the leak (2026-11-02): two real items. **`video-output/tiktok_session/`** (1015 files, 2 commits) and **`backups/otomasyon-yedek-2026-09-05.tar.gz`** (a full backup tarball — its contents are unknown, so treat every secret that existed on 2026-09-05 as exposed). `.env` itself was never committed (covered by `.gitignore:2`), and 8 of the 14 `scripts/secret_scan_baseline.json` entries are fake values from `tests/test_secret_scan*.py` fixtures. History rewrite (`git filter-repo`) is optional; rotation is not.
+
+> The scanner now **opens** committed archives (`.zip`, `.tar.gz`, …) instead of skipping binary blobs — the tarball above was invisible to it until 2026-11-02. It also flags every archive path as a finding on its own, so an archive it cannot open is never reported as "clean".
 
 ## TikTok yayını: iki yol
 
