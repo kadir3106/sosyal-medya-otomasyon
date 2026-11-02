@@ -28,6 +28,21 @@ docker compose up -d
 ```
 n8n arayüzü: http://localhost:5678
 
+## Otonom yayın: iki yetki, ikisi de bilinçli
+
+`scripts/daily_autonomous_agent.py` günde bir video üretir ve varsayılan olarak **hiçbir platforma göndermez**. Yayın için iki bağımsız yetkiden biri gerekir:
+
+| Yetki | Nasıl açılır | Ne zaman kullanılır |
+| --- | --- | --- |
+| İnsan onayı | `--director` (Telegram'da "Yayınla" butonu) | Önerilen varsayılan. `scripts/run_daily.bat` bu modu kullanır. |
+| Makine onayı | `.env`: `ALLOW_AUTONOMOUS_PUBLISH=true` | Onaysız, tam otonom akış. YouTube'a `public` yükler; geri alınamaz. |
+
+**Yalnızca tam olarak `true` sayılır.** Kod `...lower() == "true"` ile karşılaştırdığı için `1`, `yes`, `on`, `TRUE ` (sondaki boşluk) ve `True!` **kapalı** sayılır — yazım hatası kazara public yayın başlatmasın diye. Bu davranış `test_publish_gate_blocks_lookalike_values` ile kilitli.
+
+`--director` modunda akış: video üretilir → Telegram'a önizleme + iki buton gider → "Yayınla" yayınlar, "İptal" her zaman kazanır (açık bayrağı bile ezer), 180 saniye yanıt gelmezse tur yayınlamadan biter.
+
+> ⚠️ Bu bayrak daha önce yalnızca kodda vardı; `.env.example`'da tanımlı olmadığı için pratikte hiçbir kurulum onu açamıyordu ve `run_daily.bat` onay adımını atlayarak (`--now`) çalıştığı için günlük tur video üretip sessizce yayınlamadan bitiyordu.
+
 ## Security note (credential rotation)
 
 `main` previously tracked a Playwright TikTok browser profile under `video-output/tiktok_session/` and a backup tarball. Those paths are now gitignored and untracked on this branch, but **anything that was ever public should be rotated**: TikTok session/cookies, TikTok PKCE/OAuth tokens, and any secrets that may have lived inside `backups/*.tar.gz`. History rewrite is optional; rotation is not.

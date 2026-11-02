@@ -169,6 +169,47 @@ def test_publish_gate_opens_only_for_exact_true(isolated, monkeypatch):
     assert isolated["youtube"].call_count == 1
 
 
+def test_operator_approval_authorises_publish_without_env_flag(isolated, monkeypatch):
+    """Telegram'da "Yayınla"ya basmak TEK BAŞINA yayın yetkisi olmalı.
+
+    Önceki hâlde değildi: kod "🚀 Onay Alındı! Kanallara yükleme başlatılıyor..."
+    mesajını gönderiyor, ardından env kapısı `return None` ile yayını
+    engelliyordu. Operatöre "yükleniyor" deniyor, hiçbir şey yüklenmiyordu.
+    Yani `--director` akışı (ve `run_daily.bat`) hiçbir koşulda yayın yapamazdı.
+    """
+    _director_setup(monkeypatch)  # ALLOW_AUTONOMOUS_PUBLISH set EDİLMEZ
+    assert "ALLOW_AUTONOMOUS_PUBLISH" not in __import__("os").environ
+    updates = _updates(
+        {"update_id": 1, "callback_query": {"id": "cq", "data": f"pub:{FROZEN_JOB_ID}"}}
+    )
+    with patch.multiple(config, TELEGRAM_BOT_TOKEN="tok", TELEGRAM_CHAT_ID="42"), patch(
+        "app.telegram_bot.get_updates", return_value=updates
+    ), patch("app.telegram_bot.answer_callback_query"), patch(
+        "app.channel_growth.analyze_channel_growth", side_effect=RuntimeError("yok")
+    ), patch.object(agent, "generate_video", return_value=FAKE_RESULT):
+        result = _run(director_mode=True)
+
+    assert result == "https://youtube.com/shorts/vid1", "onay verildi ama yayınlanmadı"
+    assert isolated["youtube"].call_count == 1
+
+
+def test_director_timeout_without_env_flag_does_not_publish(isolated, monkeypatch):
+    """Onay GELMEZSE ve env bayrağı yoksa yayın olmamalı.
+
+    `approved` yalnızca gerçek bir `pub:` callback'i ile True olur. Zaman aşımı
+    onay yerine geçmez — aksi halde 180 saniye bekleyen herkes yayın yapardı.
+    """
+    _director_setup(monkeypatch)
+    monkeypatch.delenv("ALLOW_AUTONOMOUS_PUBLISH", raising=False)
+    with patch.multiple(config, TELEGRAM_BOT_TOKEN="tok", TELEGRAM_CHAT_ID="42"), patch(
+        "app.telegram_bot.get_updates", return_value={"result": []}
+    ), patch.object(agent, "generate_video", return_value=FAKE_RESULT):
+        result = _run(director_mode=True)
+
+    assert result is None
+    assert not isolated["youtube"].called
+
+
 def test_generation_failure_releases_topic_and_raises(isolated):
     """Üretim çökerse konu havuza geri bırakılır ve hata yukarı propaglanır.
 
@@ -254,9 +295,17 @@ def _updates(*updates):
 FROZEN_JOB_ID = "auto_20261031_183000"
 
 
-def _director_setup(monkeypatch):
-    """Yönetmen modu için: sabit saat, gerçek uyku yok."""
-    monkeypatch.setenv("ALLOW_AUTONOMOUS_PUBLISH", "true")
+def _director_setup(monkeypatch, *, autonomous: bool = False):
+    """Yönetmen modu için: sabit saat, gerçek uyku yok.
+
+    `autonomous=False` (varsayılan) env bayrağını KAPALI bırakır; böylece test
+    yalnızca insan onayının (`approved`) yetip yetmediğini ölçer. `True`
+    verilirse tam otonom mod da açılır — ikisinin bağımsız olduğunu sınamak için.
+    """
+    if autonomous:
+        monkeypatch.setenv("ALLOW_AUTONOMOUS_PUBLISH", "true")
+    else:
+        monkeypatch.delenv("ALLOW_AUTONOMOUS_PUBLISH", raising=False)
     monkeypatch.setattr(agent, "datetime", _frozen_datetime(18, 30))
     monkeypatch.setattr(agent.time, "time", _Clock())
     monkeypatch.setattr(agent.asyncio, "sleep", _FakeAsyncio().sleep)
@@ -304,13 +353,16 @@ def test_director_cancel_returns_none_and_never_publishes(isolated, monkeypatch)
     assert not isolated["release"].called
 
 
-def test_director_timeout_publishes_anyway(isolated, monkeypatch):
-    """Zaman aşımı bilinçli davranış: yanıt gelmezse otomatik yayınlanır.
+def test_director_timeout_publishes_when_autonomous_flag_set(isolated, monkeypatch):
+    """Bayrak açık + onay gelmedi → yayınlanır.
 
-    Bu, Telegram mesajındaki "yanıt gelmezse otomatik yayınlanır" sözüyle
-    tutarlı. Değişirse (ör. sessizce engellenirse) operatör bunu bilmeli.
+    Bu, Telegram mesajındaki "yanıt gelmezse otomatik yayınlanır" sözünü
+    KORUYOR, ama yalnızca operatör tam otonom modu bilinçli açtıysa. Önceki
+    hâlde bayrak yoksa da yayınlanmıyordu (yanlış); şimdi ayrım şu:
+    zaman aşımı tek başına yetmez, `ALLOW_AUTONOMOUS_PUBLISH=true` ile
+    birlikte yeter.
     """
-    _director_setup(monkeypatch)
+    _director_setup(monkeypatch, autonomous=True)
     with patch.multiple(config, TELEGRAM_BOT_TOKEN="tok", TELEGRAM_CHAT_ID="42"), patch(
         "app.telegram_bot.get_updates", return_value={"result": []}
     ), patch(
@@ -323,6 +375,7 @@ def test_director_timeout_publishes_anyway(isolated, monkeypatch):
 
 
 def test_director_approval_publishes(isolated, monkeypatch):
+    """Onay geldi, env bayrağı YOK → yine de yayınlanır (insan yetkisi yeter)."""
     _director_setup(monkeypatch)
     updates = _updates(
         {"update_id": 1, "callback_query": {"id": "cq", "data": f"pub:{FROZEN_JOB_ID}"}}
@@ -336,6 +389,27 @@ def test_director_approval_publishes(isolated, monkeypatch):
 
     assert result is not None
     assert isolated["youtube"].call_count == 1
+
+
+def test_director_cancel_beats_autonomous_flag(isolated, monkeypatch):
+    """İptal, açık bayrağı EZER — yoksa iptal düğmesi işlevsiz kalırdı.
+
+    Zaman aşımı "otomatik yayınla" diyor ama açık bir "İptal" her zaman kazanır:
+    iptal dalı yayın kapısından önce `return None` ediyor.
+    """
+    _director_setup(monkeypatch, autonomous=True)
+    updates = _updates(
+        {"update_id": 1, "callback_query": {"id": "cq", "data": f"cancel:{FROZEN_JOB_ID}"}}
+    )
+    with patch.multiple(config, TELEGRAM_BOT_TOKEN="tok", TELEGRAM_CHAT_ID="42"), patch(
+        "app.telegram_bot.get_updates", return_value=updates
+    ), patch("app.telegram_bot.answer_callback_query"), patch.object(
+        agent, "generate_video", return_value=FAKE_RESULT
+    ):
+        result = _run(director_mode=True)
+
+    assert result is None
+    assert not isolated["youtube"].called, "iptal edilen video yayınlandı"
 
 
 def test_director_without_telegram_falls_through_to_publish(isolated, monkeypatch):

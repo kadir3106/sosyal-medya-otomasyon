@@ -100,6 +100,13 @@ async def execute_daily_run(use_trend: bool = False, director_mode: bool = False
         print(f"💬 Sabitlenmiş Yorum Kancası: {pinned_comment}")
     
     # İsteğe bağlı: Telegram Yönetmen Modu (Yayın Öncesi Önizleme & Onay Butonları)
+    #
+    # `approved`: operatörün Telegram'dan verdiği AÇIK onay. Aşağıdaki yayın
+    # kapısı bunu yetki sayıyor. Önceden saymıyordu ve şu çelişki doğuyordu:
+    # operatör "🚀 Hemen Tüm Kanallara Yayınla" butonuna basıyor, kod "Onay
+    # Alındı" mesajını gönderiyor, sonra env kapısı yayını yine de engelliyordu.
+    # Yani `--director` akışı hiçbir koşulda yayın yapamıyordu.
+    approved = False
     if director_mode and config.TELEGRAM_BOT_TOKEN and config.TELEGRAM_CHAT_ID:
         from app.telegram_bot import answer_callback_query, get_updates
         print("\n📲 [Yönetmen Modu] Telegram'a onay ve önizleme gönderiliyor...")
@@ -120,7 +127,6 @@ async def execute_daily_run(use_trend: bool = False, director_mode: bool = False
         send_message(config.TELEGRAM_BOT_TOKEN, config.TELEGRAM_CHAT_ID, dir_caption, reply_markup=reply_markup)
 
         print("⏳ Telegram'dan onay bekleniyor (Maksimum 3 dakika, yanıt gelmezse otomatik yayınlanır)...")
-        approved = False
         start_wait = time.time()
         offset = 0
         while time.time() - start_wait < 180:
@@ -149,12 +155,20 @@ async def execute_daily_run(use_trend: bool = False, director_mode: bool = False
         if not approved:
             print("⏱️ Zaman aşımı: Telegram'dan yanıt gelmedi.")
 
-    # Yayın public ve geri alınamaz; onay atlanarak çalıştırılmasın.
-    # shortcut: tek env bayrağı, platform bazlı politika yok — onaylar ContentJob'a taşınınca yükselt.
-    if os.environ.get("ALLOW_AUTONOMOUS_PUBLISH", "").lower() != "true":
+    # İki bağımsız yetki var, biri yeterli:
+    #   1. `approved`  → operatör Telegram'da "Yayınla"ya bastı (insan onayı).
+    #   2. env bayrağı → tam otonom yayın bilinçli olarak açıldı (makine onayı).
+    # Hiçbiri yoksa video üretilir ama yayınlanmaz. `--director` ile çalışırken
+    # onay/iptal düğmeleri hâlâ işler: iptal dalı bu kapıdan önce `return` eder,
+    # yani açık bir "İptal" her zaman kazanır.
+    # shortcut: platform bazlı politika yok — onaylar ContentJob'a taşınınca yükselt.
+    autonomous_publish = os.environ.get("ALLOW_AUTONOMOUS_PUBLISH", "").lower() == "true"
+    if not (approved or autonomous_publish):
         print(
-            "🔒 ALLOW_AUTONOMOUS_PUBLISH != true — video üretildi ama YAYINLANMADI. "
-            "Yayın için /publish onay akışını kullanın."
+            "🔒 Yayın yetkisi yok — video üretildi ama YAYINLANMADI.\n"
+            "   • İnsan onayı için: --director ile çalıştırın (Telegram onay butonları).\n"
+            "   • Tam otonom için: ALLOW_AUTONOMOUS_PUBLISH=true\n"
+            "   • Elle yayın için: /publish onay akışını kullanın."
         )
         return None
 

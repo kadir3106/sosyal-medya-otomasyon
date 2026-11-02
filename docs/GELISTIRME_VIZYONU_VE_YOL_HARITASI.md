@@ -1311,7 +1311,10 @@ Eski (tek `except Exception`) sürüm geri konup koşturuldu: **3 test düştü*
 
 **Kalan karar (bilinçli, kapsam dışı):** playwright imaja eklenip bu yol gerçekten çalıştırılsın mı, yoksa TikTok yalnızca resmi API'ye mi bırakılsın? Bu bir ürün kararı — imaja ~400 MB tarayıcı bağımlılığı eklemek ya da bir yeteneği resmen bırakmak anlamına geliyor. Kod artık hangi durumda olduğunu söylüyor; karar verildiğinde tek yerde değişecek.
 
-### 28. Karar verildi: TikTok web yolu opt-in, sessiz değil (2026-11-01)
+### 28. Karar verildi: TikTok web yolu opt-in, sessiz degil (2026-11-01)
+ruff E9,F63,F7,F82             → All checks passed!
+```
+
 
 Madde 27.5'in sonunda bıraktığım kararı verdim ve uyguladım: **playwright varsayılan imaja girmiyor, ama web yolu artık gerçekten çalıştırılabilir — ve çalışmadığında bunu saklamıyor.**
 
@@ -1442,14 +1445,101 @@ Yeni dosya `tests/test_tiktok_browser_lazy.py` (6 test):
 
 **Bilinen sınır:** `docker build` gerçekten koşulmadı (daemon kapalı). `INSTALL_BROWSER=1` yolu bu makinede test edilmedi; CI'da da koşmuyor (400 MB indirmemek için bilinçli). İlk kez kullanılırken `docker compose build --build-arg INSTALL_BROWSER=1` çıktısı gözle doğrulanmalı.
 
+### 29. Otonom yayın kapısı vardı ama hiçbir zaman açılamıyordu (2026-11-02)
 
+Madde 27.3'te yayın kapısını (`ALLOW_AUTONOMOUS_PUBLISH`) eklerken ölçtüğüm şey kodun *kendisiydi*. Bu turda kullanıcı "kalan açıkları kapat" dedi; denetim üç ayrı gerçeği ortaya çıkardı ve üçü birlikte şu sonucu veriyor: **günlük otonom tur çalışıyordu, video üretiyordu, ve asla yayınlamıyordu — bunu da kimseye söylemiyordu.**
 
+#### 29.1 Ölçüm: bayrak üç yerde birden yoktu
 
+```
+$ Select-String -Path docker-compose.yml,.env.example,README.md -Pattern 'ALLOW_AUTONOMOUS_PUBLISH'
+--- bitti ---            # hiç eşleşme yok
+```
 
+| Yer | Durum | Sonuç |
+| --- | --- | --- |
+| `scripts/daily_autonomous_agent.py` | var | kapı çalışıyor |
+| `.env.example` | **yok** | yeni kurulum bayrağı hiç görmez |
+| `docker-compose.yml` | **yok** | konteynerde env hiç set edilmez |
+| `README.md` | **yok** | davranış belgelenmemiş |
 
-**Sınır (dürüst):** `scripts/` altındaki `daily_autonomous_agent.py` hâlâ tam kapsanmıyor. Gerçek birim testi `execute_daily_run`'ın yan etkilerini (render, yayın, Telegram) teker teker sarmalamayı gerektirir; bugün yalnızca imza/çağrı tutarlılığı ve CLI argüman ayrıştırması kilitli. Ajanın iç mantığı hâlâ test edilmiyor.
+Bu tek başına "kapı var ama kimse açamaz" demekti. Ama asıl sorun daha derindeydi.
 
-Sonuç: **754 passed, 3 skipped** (madde 26'daki 750 + 4 yeni), yerelde 1 m 57 s.
+#### 29.2 `run_daily.bat` onay adımını tamamen atlıyordu
+
+```bat
+python.exe "scripts\daily_autonomous_agent.py" --now
+```
+
+`--director` bayrağı **yok**. Yani günlük otomasyon Telegram onay akışını hiç çalıştırmıyordu; doğrudan `--now` ile yayın kapısına geliyor, kapı da `.env`'de tanımlı olmadığı için `return None` ediyordu. Üretim logu bunu doğruluyor:
+
+```
+daily_scheduler.log: 286 satır, 3 tur başlamış, 0 kez yayın kapısı mesajı
+$ grep -c 'ALLOW_AUTONOMOUS_PUBLISH' daily_scheduler.log   → 0
+```
+
+Yani 3 turun hiçbiri kapıya ulaşmamış — hepsi daha önceki (madde 27'de düzeltilen) `TypeError` ile çökmüş.
+
+#### 29.3 Asıl hata: `approved` hiçbir yere bağlı değildi
+
+Kodu okuyunca ortaya çıkan çelişki:
+
+```python
+if cdata.startswith(f"pub:{job_id}"):
+    send_message(..., "🚀 *Onay Alındı!* Kanallara yükleme başlatılıyor...")
+    approved = True                      # ← operatöre "yükleniyor" deniyor
+    ...
+if os.environ.get("ALLOW_AUTONOMOUS_PUBLISH", "").lower() != "true":
+    return None                          # ← sonra yayın yine engelleniyor
+```
+
+`approved` değişkeni yalnızca döngüden çıkmak için kullanılıyordu, yayın kapısına **hiç ulaşmıyordu**. Sonuç: `--director` akışı hiçbir koşulda yayın yapamazdı. Operatör "Onay Alındı, yükleme başlatılıyor" mesajını görüp hiçbir şeyin yüklenmediğine tanık olurdu — üstelik hata da göremezdi.
+
+**Düzeltme.** İki bağımsız yetki, biri yeterli:
+
+```python
+approved = False                      # fonksiyon başında, iki dal da görsün
+
+autonomous_publish = os.environ.get("ALLOW_AUTONOMOUS_PUBLISH", "").lower() == "true"
+if not (approved or autonomous_publish):
+    print("🔒 Yayın yetkisi yok — video üretildi ama YAYINLANMADI. …")
+    return None
+```
+
+`approved`'ı `if director_mode` bloğunun içinden dışarı taşıdım (blok çalışmazsa `NameError` olurdu). İptal dalı kapıdan önce `return None` ettiği için **açık bir "İptal" açık bayrağı da ezer** — bu korunuyor.
+
+#### 29.4 Beş yeni test (23 → 28)
+
+| Test | Neyi kilitliyor |
+| --- | --- |
+| `test_operator_approval_authorises_publish_without_env_flag` | Onay tek başına yeter — düzeltilen hayalet senaryo |
+| `test_director_timeout_without_env_flag_does_not_publish` | Zaman aşımı onay yerine geçmez |
+| `test_director_timeout_publishes_when_autonomous_flag_set` | Bayrak açıksa "yanıt gelmezse yayınla" sözü tutulur |
+| `test_director_approval_publishes` | Onay + bayrak yok → yayınlanır (güncellendi) |
+| `test_director_cancel_beats_autonomous_flag` | İptal, açık bayrağı ezer |
+
+`_director_setup` artık `autonomous=False` varsayılanıyla geliyor; böylece testler *yalnızca* insan onayını ölçüyor, env bayrağı arka planda gizlice açık kalmıyor. Bu önemliydi: eski hâlde `monkeypatch.setenv(..., "true")` ile her yönetmen testi bayrağı açıyordu, yani `approved`'ın gerçekten gerekli olup olmadığı **hiç sınanmamıştı**.
+
+**Mutasyon kanıtı.** `if not (approved or autonomous_publish)` → `if not autonomous_publish` yapıldığında **2 test düştü** (`test_operator_approval_authorises_publish_without_env_flag`, `test_director_approval_publishes`). Yani testler gerçekten düzeltmeyi koruyor.
+
+#### 29.5 Belgeleme ve yapılandırma
+
+- **`.env.example`** — bayrak, yorumlarıyla birlikte (varsayılan kapalı, yalnızca tam `true` sayılır, `1`/`yes`/`TRUE ` kapalı sayılır, açılınca YouTube'a `public` gider).
+- **`README.md`** — yeni "Otonom yayın: iki yetki, ikisi de bilinçli" bölümü: yetki tablosu, lookalike değer uyarısı, `--director` akışının adım adım davranışı.
+- **`scripts/run_daily.bat`** — `--now` → `--director`. Artık günlük tur insan onayı istiyor; tam otonom isteyen bayrağı açar *ve* `--now`'a döner.
+
+`docker-compose.yml`'a **bilerek eklenmedi**: `Dockerfile` `scripts/` klasörünü hiç `COPY` etmiyor (`COPY scripts?: False`), yani ajan konteynerde yok. Oraya env eklemek "konteynerde çalışıyor" yanılsaması yaratırdı.
+
+#### 29.6 Doğrulama
+
+```
+pytest -q                      → 788 passed, 3 skipped   (750 → 788, +38)
+ruff E9,F63,F7,F82             → All checks passed!
+```
+
+**Sınır (dürüst):** `scripts/` altındaki `daily_autonomous_agent.py` hâlâ tam kapsanmıyor. Gerçek birim testi `execute_daily_run`'ın yan etkilerini (render, yayın, Telegram) teker teker sarmalamayı gerektirir; bugün yalnızca imza/çağrı tutarlılığı, CLI argüman ayrıştırması ve yayın kapısı kilitli. Ajanın iç mantığı hâlâ test edilmiyor.
+
+> **Açık kalan (karar bekliyor):** sızan kimlik bilgilerinin döndürülmesi (TikTok oturumu, TikTok PKCE/OAuth token'ları, `.env`'deki 38 dolu anahtar) ve `video-output/tiktok_session/` dizisinin geçmişten silinmesi (`git filter-repo`) **yapılmadı**. İkisi de yıkıcı işlem; onay bekliyor. Bu yüzden `scripts/secret_scan_baseline.json` bilinçli olarak boş değil (14 kabul kaydı).
 
 
 | Commit | İçerik |
@@ -1494,6 +1584,7 @@ Sonuç: **754 passed, 3 skipped** (madde 26'daki 750 + 4 yeni), yerelde 1 m 57 s
 | `—` | TikTok web yolu üç durumu ayırıyor; sessiz `except` kaldırıldı (madde 27.5) |
 | `—` | TikTok web yolu opt-in: tembel import + `.dockerignore` (754 MB → 3 MB) + oturum aracı (madde 28) |
 | `—` | Madde 27.1–27.3: üretim logunda 38 çökme kanıtı + 20 davranış testi |
+| `—` | Otonom yayın kapısı gerçekten açılabilir hale getirildi: onay yetkisi + `.env.example` + README (madde 29) |
 
 > Bu belgeyi güncelleyen commit ayrıca `docs:` önekiyle geçmişte bulunabilir (kendi hash'ini içeremez).
 
