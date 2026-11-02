@@ -396,11 +396,11 @@ git gc --prune=now --aggressive
 
    Google/Meta/X/OpenRouter anahtarları bu arşivde **yok** (130 tablo tarandı) — onlar için ek iş yok.
 
-   **Durumu ölçmek için:** `python scripts/verify_leak_rotation.py` — 0 = hepsi etkisiz, 1 = açık var, 2 = ölçülemedi. Her adımdan sonra çalıştırın; panelde yapılan işi tahmin etmek yerine doğrular.
+   **Durumu ölçmek için:** `python scripts/verify_leak_rotation.py` — 0 = hepsi etkisiz, 1 = açık var, 2 = ölçülemedi. Her adımdan sonra çalıştırın; panelde yapılan işi tahmin etmek yerine doğrular. Betiğin **kendi testleri** de artık CI'da gerçekten koşuyor: `cryptography`/`bcrypt` hiçbir requirements'ta olmadığı için 4 test `importorskip` ile sessizce atlanıyordu (ölçüldü: 7 passed, 4 skipped) — yani sır çözme yolunun hiç çalışmadığı bir CI'da "yeşil" görüntüsü alınıyordu. `video-worker/requirements-verify.txt` eklendi ve test job'ı atlama sayısı 3'ü geçerse **kırmızıya dönüyor**.
 2. **Bölüm 3 — geçmiş silme.** Hijyen; tekrarını engeller. ✅ **Yapıldı** (3.9).
 3. **Bölüm 3.10 — tüm dalları yayınlama.** ✅ **Yapıldı** (bu adım ilk turda atlanmıştı, CI yakaladı).
 4. **Bölüm 3.6 — baseline.** ✅ **Yapıldı** (15 → 8).
-5. **CI yeşil mi:** `lint`, `secret-scan`, `history-scan`, `test`. ✅ **4/4.**
+5. **CI yeşil mi:** `lint`, `secret-scan`, `history-scan`, `test`. ✅ **4/4.** `test` artık 3 skip ile (şifreleme testleri dahil) koşuyor.
 
 ## 5. Bunu bir daha yaşamamak için (hâlihazırda yapıldı)
 

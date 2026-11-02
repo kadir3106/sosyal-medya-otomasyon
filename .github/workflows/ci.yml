@@ -33,14 +33,56 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          pip install -r requirements-verify.txt
 
       # No .env is present here, which is the point: tests/conftest.py keeps the suite
       # hermetic (legacy pipeline mode, stubbed refine_script, external network blocked,
-      # retries disabled). Verified 754 passed, 3 skipped in ~1 m 57 s on this runner.
-      # Updated after making the TikTok browser path opt-in: 785 passed,
-      # 3 skipped, ~1 m 02 s locally — re-measure if this drifts again.
+      # retries disabled). Re-measured 2026-11-02: 822 passed, 3 skipped, ~1 m 00 s.
+      #
+      # Skip sayısı NEDEN kontrol ediliyor: `cryptography`/`bcrypt` ana
+      # `requirements.txt`'te yok (uygulama onları import etmiyor), bu yüzden
+      # `verify_leak_rotation` testleri `importorskip` ile CI'da sessizce
+      # atlanıyordu — ölçüldü: 7 passed, 4 skipped. Yani sır çözme yolunun hiç
+      # çalışmadığı bir CI'da "testler yeşil" görüntüsü alınıyordu. Artık
+      # `requirements-verify.txt` kuruluyor ve atlama 3'e düştü.
+      #
+      # 3 skip meşru ve kalıcı (conftest.py'nin kasıtlı olarak blokladığı
+      # ağ/isteğe bağlı yollar). Fazlası = bir bağımlılık kayboldu = kırmızı.
       - name: Run tests
-        run: pytest tests -q
+        run: |
+          pytest tests -q -rs --no-header > pytest_out.txt 2>&1; status=$?
+          tail -6 pytest_out.txt
+          # Kapi Python ile: grep/locale'e bagimli degil.
+          # KRITIK: ozet satiri HIC okunamazsa kapi YESIL olmamali. Aksi halde
+          # cikti formati degistiginde (veya dosya UTF-16 yazildiginda — Windows'ta
+          # `>` tam bunu yapiyor, olculdu) kapi sessizce acilir ve 4 test yeniden
+          # atlanmaya baslar, kimse fark etmez.
+          python - <<'PY'
+          import re, sys
+          raw = open("pytest_out.txt", "rb").read()
+          text = ""
+          for enc in ("utf-8", "utf-16", "latin-1"):
+              try:
+                  text = raw.decode(enc)
+                  if "passed" in text or "skipped" in text:
+                      break
+              except (UnicodeDecodeError, UnicodeError):
+                  continue
+          found = re.findall(r"(\d+) skipped", text)
+          passed = re.search(r"(\d+) passed", text)
+          if not found and not passed:
+              print("::error::pytest ozet satiri okunamadi — kapi koru, yesil sayilmiyor")
+              sys.exit(1)
+          skipped = int(found[-1]) if found else 0
+          print("atlanan test: %d (beklenen: 3)" % skipped)
+          if skipped > 3:
+              for line in text.splitlines():
+                  if line.startswith("SKIPPED"):
+                      print(line)
+              print("::error::%d test atlandi — requirements-verify.txt kurulu mu?" % skipped)
+              sys.exit(1)
+          PY
+          exit $status
 
   lint:
     # Neden var: bu depoda iki çökme CI'dan geçti çünkü hiçbir lint kapısı yoktu.

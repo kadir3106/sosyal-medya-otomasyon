@@ -1,0 +1,22 @@
+# `scripts/verify_leak_rotation.py` testlerinin SIR ÇÖZME yolu için bağımlılıklar.
+# Ana imaja DAHİL DEĞİL — uygulama bu iki paketi hiç import etmiyor.
+#
+# Neden ayrı dosya: önce bunlar hiçbir requirements'ta yoktu ve testler
+# `importorskip` ile CI'da SESSİZCE atlanıyordu (ölçüldü: 7 passed, 4 skipped).
+# Yani "testler yeşil" görüntüsü, sır çözme kodunun hiç çalışmadığı bir CI'da
+# alınıyordu. Bu dosya o körlüğü kapatıyor: test job'ı bunları kuruyor, atlama
+# sıfıra iniyor.
+#
+# Neden yalnızca CI (ve isteyen geliştirici) kuruyor, requirements.txt değil:
+# `cryptography` tekerlekleri platforma özgü derlenmiş ikili dosyalar getiriyor
+# (~4 MB) ve prodüksiyon imajında gereksiz. `requirements-browser.txt` ile aynı
+# desen: opt-in, gerekçeli, tek amaçlı.
+#
+# Kullanım:
+#     pip install -r requirements.txt -r requirements-verify.txt
+#
+# Sürümler BURADA ÖLÇÜLEN sürümlere sabitlendi (lokal: cryptography 46.0.7,
+# bcrypt 5.0.0 — ikisi de Python 3.13'te temiz kuruldu). CI'ın sessizce başka
+# bir sürüme kayıp farklı davranmasını istemiyoruz.
+cryptography==46.0.7
+bcrypt==5.0.0
