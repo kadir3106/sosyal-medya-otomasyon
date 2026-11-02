@@ -123,7 +123,7 @@ video-output/tiktok_*.png                          (13 ekran görüntüsü, HEAD
 ```powershell
 cd c:\Projects\sosyal-medya-otomasyon
 
-# 1) YEDEK — atlanmaz. 1.3 GB, "is okay", 8 ref doğrulandı.
+# 1) YEDEK — atlanmaz. 131 MB, "is okay", 8 ref doğrulandı.
 git bundle create ..\sosyal-medya-otomasyon-YEDEK.bundle --all
 git bundle verify ..\sosyal-medya-otomasyon-YEDEK.bundle
 
@@ -211,7 +211,7 @@ GitHub tarafında eski commit'ler erişilemez olsa da **nesne olarak kalır**; G
 
 | Adım | Sonuç |
 | --- | --- |
-| `git bundle create --all` | 1.3 GB, `verify` → **"is okay"**, 8 ref |
+| `git bundle create --all` | 131 MB, `verify` → **"is okay"**, 8 ref |
 | `git-filter-repo` kurulumu | `2.47.0` (makinede yoktu, pip ile kuruldu) |
 | Yeniden yazım | 73 commit → **73 commit** (yalnızca yollar silindi), 0.82 sn |
 | Commit hash'i | `c09ee1c` → **`9763f25`** (tüm geçmiş değişti — beklenen) |
@@ -271,7 +271,7 @@ Push'tan sonra başarısız CI koşusunu yeniden tetikleyin (`gh run rerun <id>`
 
 ### 3.11 Yerel yedeği güvene alın, sonra silin
 
-`git bundle` yedeği (1.3 GB) **sızıntılı nesneleri taşır**: `tiktok_session` profili, `n8n encryptionKey` içeren tarball. Bir yedek dizininizde durması, temizlediğiniz şeyi yeniden yaymanın en kolay yoludur.
+`git bundle` yedeği (131 MB) **sızıntılı nesneleri taşır**: `tiktok_session` profili, `n8n encryptionKey` içeren tarball. Bir yedek dizininizde durması, temizlediğiniz şeyi yeniden yaymanın en kolay yoludur.
 
 ```powershell
 # Yeniden yazımın doğru olduğunu teyit ettikten SONRA:
